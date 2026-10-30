@@ -168,14 +168,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
             <Upload className="w-4 h-4 mr-2" />
             Upload PDF
           </button>
-          <button
-            disabled
-            className="inline-flex items-center px-3.5 py-2 bg-slate-100 text-slate-400 text-sm font-medium rounded-lg border border-slate-200 cursor-not-allowed transition"
-            title="Search Online will be available in future phase"
-          >
-            <Search className="w-4 h-4 mr-1.5" />
-            Search Online
-          </button>
         </div>
       </div>
 

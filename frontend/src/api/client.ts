@@ -85,6 +85,52 @@ export interface CuratedPaper {
   date_added: string;
 }
 
+export interface DiscoveredPaper {
+  id: string;
+  source: 'openalex' | 'crossref';
+  title: string;
+  authors: string[];
+  year?: number;
+  venue?: string;
+  doi?: string;
+  abstract?: string;
+  citation_count: number;
+  landing_page_url?: string;
+  pdf_url?: string;
+  is_open_access: boolean;
+  in_library: boolean;
+}
+
+export interface DiscoverySearchResponse {
+  query: string;
+  provider: string;
+  total_results: number;
+  results: DiscoveredPaper[];
+}
+
+export interface DiscoveryImportRequest {
+  title: string;
+  authors?: string[];
+  year?: number;
+  venue?: string;
+  doi?: string;
+  abstract?: string;
+  source_url?: string;
+  pdf_url?: string;
+  project_id?: number;
+}
+
+export interface DiscoveryImportResponse {
+  paper_id: number;
+  title: string;
+  doi?: string;
+  pdf_downloaded: boolean;
+  page_count: number;
+  chunks_created: number;
+  project_linked: boolean;
+  message: string;
+}
+
 export interface RetrievedChunk {
   chunk_id: number;
   paper_id: number;
@@ -431,5 +477,45 @@ export const api = {
       headers: getAuthHeaders(),
     });
     if (!res.ok) throw new Error('Failed to delete query');
+  },
+
+  // Scholarly Discovery Connectors (OpenAlex & Crossref)
+  searchDiscovery: async (
+    query: string,
+    fromYear?: number,
+    toYear?: number,
+    limit: number = 10
+  ): Promise<DiscoverySearchResponse> => {
+    const params = new URLSearchParams({
+      q: query,
+      limit: limit.toString(),
+      pdf_only: 'true',
+    });
+    if (fromYear) params.append('from_year', fromYear.toString());
+    if (toYear) params.append('to_year', toYear.toString());
+
+    const res = await fetch(`${API_BASE}/discovery/search?${params.toString()}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to search scholarly sources');
+    }
+    return res.json();
+  },
+
+  importDiscoveredPaper: async (
+    payload: DiscoveryImportRequest
+  ): Promise<DiscoveryImportResponse> => {
+    const res = await fetch(`${API_BASE}/discovery/import`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to import discovered paper');
+    }
+    return res.json();
   },
 };

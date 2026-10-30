@@ -5,6 +5,7 @@ from app.api.health import router as health_router
 from app.api.auth import router as auth_router
 from app.api.projects import router as projects_router
 from app.api.papers import router as papers_router
+from app.api.discovery import router as discovery_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -26,6 +27,7 @@ app.include_router(health_router, prefix=settings.API_V1_STR)
 app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(projects_router, prefix=settings.API_V1_STR)
 app.include_router(papers_router, prefix=settings.API_V1_STR)
+app.include_router(discovery_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")

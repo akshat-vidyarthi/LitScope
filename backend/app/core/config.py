@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str | None = None
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    # Scholarly Discovery (Scopus / Elsevier)
+    ELSEVIER_API_KEY: str | None = None
+    ELSEVIER_INST_TOKEN: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

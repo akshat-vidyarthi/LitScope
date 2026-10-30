@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { ProjectsView } from './components/ProjectsView';
 import { LibraryView } from './components/LibraryView';
+import { DiscoveryView } from './components/DiscoveryView';
 import { LandingPage } from './components/LandingPage';
 import { api, User } from './api/client';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'projects' | 'library'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'library' | 'discovery'>('projects');
   const [dbStatus, setDbStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -84,11 +85,13 @@ export const App: React.FC = () => {
             currentUser={currentUser}
             onOpenAuth={() => {}}
           />
-        ) : (
+        ) : activeTab === 'library' ? (
           <LibraryView
             currentUser={currentUser}
             onOpenAuth={() => {}}
           />
+        ) : (
+          <DiscoveryView />
         )}
       </main>
     </div>
