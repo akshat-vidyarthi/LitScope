@@ -9,12 +9,14 @@ import {
 
 interface PaperReaderModalProps {
   paper: Paper;
+  initialPage?: number;
   onClose: () => void;
   onPaperUpdated?: () => void;
 }
 
 export const PaperReaderModal: React.FC<PaperReaderModalProps> = ({
   paper,
+  initialPage,
   onClose,
 }) => {
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
@@ -67,6 +69,12 @@ export const PaperReaderModal: React.FC<PaperReaderModalProps> = ({
                   {version.page_count} Pages
                 </span>
               ) : null}
+
+              {initialPage && (
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Jumped to Page {initialPage}
+                </span>
+              )}
             </div>
 
             <h2 className="text-base font-bold text-slate-100 truncate" title={paper.title}>
@@ -117,7 +125,7 @@ export const PaperReaderModal: React.FC<PaperReaderModalProps> = ({
 
           {!loading && !error && pdfBlobUrl && (
             <iframe
-              src={`${pdfBlobUrl}#toolbar=1&navpanes=1`}
+              src={`${pdfBlobUrl}#page=${initialPage || 1}&toolbar=1&navpanes=1`}
               title={paper.title}
               className="w-full h-full border-0 bg-slate-950"
             />

@@ -9,6 +9,9 @@ import {
   FileText,
   Pencil,
   FolderPlus,
+  ArrowUp,
+  ArrowDown,
+  X,
 } from 'lucide-react';
 import { api, Paper, Project, User } from '../api/client';
 import { UploadPdfModal } from './UploadPdfModal';
@@ -24,6 +27,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [librarySortField, setLibrarySortField] = useState<'recent' | 'alpha' | 'year'>('recent');
+  const [librarySortDirection, setLibrarySortDirection] = useState<'asc' | 'desc'>('desc');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [curatingPaper, setCuratingPaper] = useState<Paper | null>(null);
   const [readingPaper, setReadingPaper] = useState<Paper | null>(null);
@@ -106,6 +111,25 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
     }
   };
 
+  // Point 5: Sorting filter for master library with interactive direction toggle
+  const sortedPapers = [...papers].sort((a, b) => {
+    const multiplier = librarySortDirection === 'asc' ? 1 : -1;
+    if (librarySortField === 'recent') {
+      const timeA = new Date(a.created_at).getTime() || a.id;
+      const timeB = new Date(b.created_at).getTime() || b.id;
+      return (timeA - timeB) * multiplier;
+    }
+    if (librarySortField === 'alpha') {
+      return (a.title || '').localeCompare(b.title || '') * multiplier;
+    }
+    if (librarySortField === 'year') {
+      const yearA = a.year || (librarySortDirection === 'asc' ? 9999 : 0);
+      const yearB = b.year || (librarySortDirection === 'asc' ? 9999 : 0);
+      return (yearA - yearB) * multiplier;
+    }
+    return 0;
+  });
+
   if (!currentUser) {
     return (
       <div className="max-w-md mx-auto my-20 p-8 bg-white border border-slate-200 rounded-2xl shadow-sm text-center space-y-4">
@@ -127,7 +151,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
@@ -155,27 +179,74 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="relative mb-6">
-        <Search className="w-5 h-5 text-slate-400 absolute left-3.5 top-3" />
-        <input
-          type="text"
-          placeholder="Search master library by title, abstract keyword, or author..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm shadow-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-        />
+      {/* Search and Sort Filter Bar (Point 5) */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-6">
+        {/* Search Input */}
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+          <input
+            type="text"
+            placeholder="Search master library by title, abstract keyword, or author..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-9 py-2 bg-white border border-slate-200 rounded-xl text-sm shadow-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+              title="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Sort Filter with Interactive Direction Toggle */}
+        <div className="flex items-center space-x-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-xs flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setLibrarySortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+            className="p-1 rounded-md hover:bg-slate-100 text-indigo-600 transition flex items-center justify-center cursor-pointer"
+            title={`Currently ${librarySortDirection === 'asc' ? 'Ascending' : 'Descending'}. Click to toggle.`}
+            aria-label="Toggle sort direction"
+          >
+            {librarySortDirection === 'asc' ? (
+              <ArrowUp className="w-4 h-4 text-indigo-600" />
+            ) : (
+              <ArrowDown className="w-4 h-4 text-indigo-600" />
+            )}
+          </button>
+          <span className="text-xs font-medium text-slate-500 flex-shrink-0">Sort:</span>
+          <select
+            value={librarySortField}
+            onChange={(e) => setLibrarySortField(e.target.value as any)}
+            aria-label="Sort library papers by"
+            className="text-xs bg-transparent border-none text-slate-700 font-semibold focus:outline-none cursor-pointer pr-1"
+          >
+            <option value="recent">Recently Added</option>
+            <option value="alpha">Alphabetically (Title)</option>
+            <option value="year">Year of Publishing</option>
+          </select>
+          <span className="text-[10px] text-slate-400 uppercase font-semibold flex-shrink-0 pr-1">
+            {librarySortDirection}
+          </span>
+        </div>
       </div>
 
       {/* Papers Grid */}
       {loading ? (
         <div className="text-center py-12 text-slate-400">Loading library...</div>
-      ) : papers.length === 0 ? (
+      ) : sortedPapers.length === 0 ? (
         <div className="text-center py-16 bg-white border border-slate-200 rounded-xl p-8 shadow-sm">
           <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <h3 className="text-base font-semibold text-slate-800">No papers found</h3>
+          <h3 className="text-base font-semibold text-slate-800">
+            {searchTerm ? 'No matching papers found' : 'No papers found'}
+          </h3>
           <p className="text-sm text-slate-500 mt-1 mb-4">
-            Upload an academic PDF to add your first paper.
+            {searchTerm
+              ? `No papers matched "${searchTerm}". Try a different keyword.`
+              : 'Upload an academic PDF to add your first paper.'}
           </p>
           <div className="flex justify-center space-x-3">
             <button
@@ -196,7 +267,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
         </div>
       ) : (
         <div className="space-y-4">
-          {papers.map((paper) => {
+          <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+            <span>
+              Showing <strong className="font-semibold text-slate-700">{sortedPapers.length}</strong>{' '}
+              {sortedPapers.length === 1 ? 'paper' : 'papers'}
+            </span>
+          </div>
+
+          {sortedPapers.map((paper) => {
             const version = paper.latest_version;
             return (
               <div
@@ -403,6 +481,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
           </div>
         </div>
       )}
+
       {/* Edit Paper Details Modal */}
       {editingPaper && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">

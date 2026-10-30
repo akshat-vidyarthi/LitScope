@@ -1,9 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, ArrowRight, Users, Trash2, Shield, UserPlus, Upload, BookOpen, Search } from 'lucide-react';
+import {
+  Plus,
+  Folder,
+  ArrowRight,
+  Users,
+  Trash2,
+  Shield,
+  UserPlus,
+  Upload,
+  BookOpen,
+  Search,
+  Sparkles,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Info,
+  ArrowUp,
+  ArrowDown,
+  X,
+  Calendar,
+  Check,
+  AlertCircle,
+} from 'lucide-react';
 import { api, Project, CuratedPaper, ProjectMember, User, Paper } from '../api/client';
 import { UploadPdfModal } from './UploadPdfModal';
 import { PaperReaderModal } from './PaperReaderModal';
 import { SearchLibraryModal } from './SearchLibraryModal';
+import { ProjectQAWorkspace } from './ProjectQAWorkspace';
 
 interface ProjectsViewProps {
   currentUser: User | null;
@@ -21,10 +44,27 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showSearchLibraryModal, setShowSearchLibraryModal] = useState(false);
   const [readingPaper, setReadingPaper] = useState<Paper | null>(null);
+  const [readingPage, setReadingPage] = useState<number | undefined>(undefined);
+  const [activeTab, setActiveTab] = useState<'papers' | 'qa'>('papers');
 
-  // Invite Form
+  // Project List Search & Sort Filter
+  const [projectSearch, setProjectSearch] = useState<string>('');
+  const [projectSortField, setProjectSortField] = useState<'recent' | 'alpha' | 'members'>('recent');
+  const [projectSortDirection, setProjectSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Curated Papers Collapsible State
+  const [expandedPaperIds, setExpandedPaperIds] = useState<number[]>([]);
+
+  // Project Scope & Criteria Collapsible Drawer
+  const [showProjectCriteria, setShowProjectCriteria] = useState(false);
+
+  // Invite Form & Collaborators State
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('viewer');
+  const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [inviteWarning, setInviteWarning] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [updatingRoleId, setUpdatingRoleId] = useState<number | null>(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -67,8 +107,77 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
       ]);
       setCuratedPapers(papers);
       setMembers(membersList);
+      // Minimized by default for clean lazy column view
+      setExpandedPaperIds([]);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const toggleExpandPaper = (paperId: number) => {
+    setExpandedPaperIds((prev) =>
+      prev.includes(paperId) ? prev.filter((id) => id !== paperId) : [...prev, paperId]
+    );
+  };
+
+  const handleExpandAllPapers = () => {
+    setExpandedPaperIds(curatedPapers.map((cp) => cp.paper_id));
+  };
+
+  const handleCollapseAllPapers = () => {
+    setExpandedPaperIds([]);
+  };
+
+  // Filter and sort active projects for the left sidebar lazy column
+  const filteredProjects = projects
+    .filter((proj) => {
+      if (!projectSearch.trim()) return true;
+      const term = projectSearch.toLowerCase();
+      return (
+        proj.name.toLowerCase().includes(term) ||
+        (proj.research_question && proj.research_question.toLowerCase().includes(term)) ||
+        (proj.scope && proj.scope.toLowerCase().includes(term)) ||
+        (proj.description && proj.description.toLowerCase().includes(term))
+      );
+    })
+    .sort((a, b) => {
+      const multiplier = projectSortDirection === 'asc' ? 1 : -1;
+      if (projectSortField === 'recent') {
+        const timeA = new Date(a.created_at).getTime() || a.id;
+        const timeB = new Date(b.created_at).getTime() || b.id;
+        return (timeA - timeB) * multiplier;
+      }
+      if (projectSortField === 'alpha') {
+        return a.name.localeCompare(b.name) * multiplier;
+      }
+      if (projectSortField === 'members') {
+        const countA = a.member_count ?? 1;
+        const countB = b.member_count ?? 1;
+        return (countA - countB) * multiplier;
+      }
+      return 0;
+    });
+
+  const handleRemovePaperFromStudy = async (
+    e: React.MouseEvent,
+    paperId: number,
+    paperTitle: string
+  ) => {
+    e.stopPropagation();
+    if (!selectedProject) return;
+    if (
+      !confirm(
+        `Remove "${paperTitle}" from this project study?\n\nNote: The paper will remain permanently safe in the Master Library.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.removeCuratedPaper(selectedProject.id, paperId);
+      setCuratedPapers((prev) => prev.filter((p) => p.paper_id !== paperId));
+      setExpandedPaperIds((prev) => prev.filter((id) => id !== paperId));
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove paper from study');
     }
   };
 
@@ -106,13 +215,58 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const handleInviteMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProject || !inviteEmail.trim()) return;
+
+    setInviteWarning(null);
+    setInviteError(null);
+
+    const targetEmail = inviteEmail.trim().toLowerCase();
+    const alreadyMember = members.some((m) => m.email.toLowerCase() === targetEmail);
+    if (alreadyMember) {
+      setInviteWarning(`${inviteEmail.trim()} is already a collaborator on this project.`);
+      return;
+    }
+
     try {
-      const added = await api.addProjectMember(selectedProject.id, inviteEmail, inviteRole);
-      setMembers([...members, added]);
+      const added = await api.addProjectMember(selectedProject.id, inviteEmail.trim(), inviteRole);
+      setMembers((prev) => {
+        const existingIdx = prev.findIndex((m) => m.user_id === added.user_id);
+        if (existingIdx >= 0) {
+          const next = [...prev];
+          next[existingIdx] = added;
+          return next;
+        }
+        return [...prev, added];
+      });
       setInviteEmail('');
-      alert(`Invited ${inviteEmail} as ${inviteRole}!`);
+      setInviteSuccess(true);
+      setTimeout(() => {
+        setInviteSuccess(false);
+      }, 2500);
+
+      // Automatically update collaborator count in sidebar list without manual refresh
+      const newCount = (selectedProject.member_count ?? 1) + 1;
+      setProjects((prev) =>
+        prev.map((p) => (p.id === selectedProject.id ? { ...p, member_count: newCount } : p))
+      );
+      setSelectedProject((prev) => (prev ? { ...prev, member_count: newCount } : null));
     } catch (err: any) {
-      alert(err.message || 'Failed to invite collaborator');
+      setInviteError(err.message || 'Failed to invite collaborator');
+    }
+  };
+
+  const handleUpdateMemberRole = async (userId: number, newRole: string) => {
+    if (!selectedProject) return;
+    try {
+      setUpdatingRoleId(userId);
+      setInviteError(null);
+      await api.updateProjectMemberRole(selectedProject.id, userId, newRole);
+      setMembers((prev) =>
+        prev.map((m) => (m.user_id === userId ? { ...m, role: newRole } : m))
+      );
+    } catch (err: any) {
+      setInviteError(err.message || 'Failed to update collaborator role');
+    } finally {
+      setUpdatingRoleId(null);
     }
   };
 
@@ -121,8 +275,30 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
     try {
       await api.removeProjectMember(selectedProject.id, userId);
       setMembers(members.filter((m) => m.user_id !== userId));
+
+      // Automatically update collaborator count in sidebar list without manual refresh
+      const newCount = Math.max(1, (selectedProject.member_count ?? 1) - 1);
+      setProjects((prev) =>
+        prev.map((p) => (p.id === selectedProject.id ? { ...p, member_count: newCount } : p))
+      );
+      setSelectedProject((prev) => (prev ? { ...prev, member_count: newCount } : null));
     } catch (err: any) {
       alert(err.message || 'Failed to remove member');
+    }
+  };
+
+  const handleOpenPaperReader = async (paperId: number, pageNumber?: number) => {
+    try {
+      const allPapers = await api.getPapers();
+      const target = allPapers.find((p) => p.id === paperId);
+      if (target) {
+        setReadingPaper(target);
+        setReadingPage(pageNumber);
+      } else {
+        alert('Paper details not found');
+      }
+    } catch (err: any) {
+      alert('Failed to load paper reader: ' + err.message);
     }
   };
 
@@ -149,20 +325,20 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const isOwner = selectedProject?.owner_id === currentUser.id || currentUser.role === 'owner';
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-3.5">
       {/* Top Header */}
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Research Projects</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Curated collections with project-specific research questions and role-based collaboration.
-          </p>
+      <div className="flex justify-between items-center mb-3">
+        <div className="flex items-center space-x-3">
+          <h1 className="text-xl font-bold text-slate-900">Research Projects</h1>
+          <span className="hidden sm:inline-block text-xs text-slate-400">
+            • Curated collections & grounded RAG
+          </span>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-sm transition"
+          className="inline-flex items-center px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs transition"
         >
-          <Plus className="w-4 h-4 mr-2" />
+          <Plus className="w-3.5 h-3.5 mr-1.5" />
           New Project
         </button>
       </div>
@@ -184,192 +360,404 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Projects Sidebar List */}
-          <div className="lg:col-span-1 space-y-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 px-1">
-              Active Projects ({projects.length})
-            </h2>
-            {projects.map((proj) => (
-              <div
-                key={proj.id}
-                onClick={() => setSelectedProject(proj)}
-                className={`p-4 rounded-xl border transition-all cursor-pointer ${
-                  selectedProject?.id === proj.id
-                    ? 'bg-white border-indigo-600 ring-2 ring-indigo-50 shadow-sm'
-                    : 'bg-white border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex justify-between items-start">
-                  <h3 className="font-semibold text-slate-900 text-sm">{proj.name}</h3>
-                  <ArrowRight
-                    className={`w-4 h-4 ${
-                      selectedProject?.id === proj.id ? 'text-indigo-600' : 'text-slate-300'
-                    }`}
-                  />
-                </div>
-                {proj.scope && (
-                  <span className="inline-block mt-2 text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
-                    {proj.scope}
-                  </span>
-                )}
-                {proj.research_question && (
-                  <p className="mt-2 text-xs text-slate-500 line-clamp-2 italic">
-                    "{proj.research_question}"
-                  </p>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+          {/* Left Section: Active Projects Lazy Column */}
+          <div className="lg:col-span-1 flex flex-col space-y-3">
+            {/* Search and Sort Filter Card */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Active Projects ({filteredProjects.length})
+                </h2>
+                <span className="text-[11px] text-slate-400">
+                  {projects.length} Total
+                </span>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search projects..."
+                  value={projectSearch}
+                  onChange={(e) => setProjectSearch(e.target.value)}
+                  className="w-full pl-8 pr-7 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
+                />
+                {projectSearch && (
+                  <button
+                    onClick={() => setProjectSearch('')}
+                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+                    title="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 )}
               </div>
-            ))}
+
+              {/* Filter / Sort Control with Interactive Up/Down Direction Toggle */}
+              <div className="flex items-center space-x-1.5 pt-1 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setProjectSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                  className="p-1 rounded-md hover:bg-slate-100 text-indigo-600 transition flex items-center justify-center cursor-pointer flex-shrink-0"
+                  title={`Currently ${projectSortDirection === 'asc' ? 'Ascending' : 'Descending'}. Click to toggle.`}
+                  aria-label="Toggle sort direction"
+                >
+                  {projectSortDirection === 'asc' ? (
+                    <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                  ) : (
+                    <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                  )}
+                </button>
+                <span className="text-[11px] font-medium text-slate-500 flex-shrink-0">Sort:</span>
+                <select
+                  value={projectSortField}
+                  onChange={(e) => setProjectSortField(e.target.value as any)}
+                  aria-label="Sort projects"
+                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                >
+                  <option value="recent">Recent</option>
+                  <option value="alpha">Alphabetically</option>
+                  <option value="members">People (Collaborators)</option>
+                </select>
+                <span className="text-[10px] text-slate-400 uppercase font-semibold flex-shrink-0">
+                  {projectSortDirection}
+                </span>
+              </div>
+            </div>
+
+            {/* Scrollable Lazy Column for Projects */}
+            <div className="max-h-[calc(100vh-250px)] overflow-y-auto space-y-2.5 pr-1">
+              {filteredProjects.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400 bg-white border border-dashed border-slate-200 rounded-xl">
+                  No projects match your filter.
+                </div>
+              ) : (
+                filteredProjects.map((proj) => {
+                  const isSelected = selectedProject?.id === proj.id;
+                  const memberCount = proj.member_count ?? 1;
+
+                  return (
+                    <div
+                      key={proj.id}
+                      onClick={() => setSelectedProject(proj)}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                        isSelected
+                          ? 'bg-white border-indigo-600 ring-2 ring-indigo-100 shadow-sm'
+                          : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 shadow-xs'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start gap-2">
+                        <h3 className="font-semibold text-slate-900 text-sm leading-snug flex-1">
+                          {proj.name}
+                        </h3>
+                        <ArrowRight
+                          className={`w-4 h-4 flex-shrink-0 mt-0.5 transition ${
+                            isSelected ? 'text-indigo-600 translate-x-0.5' : 'text-slate-300'
+                          }`}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                        <span className="inline-flex items-center text-[10px] font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full border border-slate-200">
+                          <Users className="w-3 h-3 mr-1 text-slate-400" />
+                          {memberCount} {memberCount === 1 ? 'member' : 'members'}
+                        </span>
+                        {proj.scope && (
+                          <span
+                            className="inline-block text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium border border-indigo-100 truncate max-w-[140px]"
+                            title={proj.scope}
+                          >
+                            {proj.scope}
+                          </span>
+                        )}
+                      </div>
+
+                      {proj.research_question && (
+                        <p className="mt-2 text-xs text-slate-500 line-clamp-2 italic">
+                          "{proj.research_question}"
+                        </p>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
 
-          {/* Selected Project Details */}
-          <div className="lg:col-span-2">
+          {/* Right Section: Selected Project Details (Point 3 & 4) */}
+          <div className="lg:col-span-3">
             {selectedProject && (
-              <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6">
-                {/* Project Header with Collaborators Action */}
-                <div className="border-b border-slate-100 pb-5">
-                  <div className="flex justify-between items-baseline">
-                    <h2 className="text-xl font-bold text-slate-900">{selectedProject.name}</h2>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => setShowMembersModal(true)}
-                        className="inline-flex items-center px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition"
-                      >
-                        <Users className="w-3.5 h-3.5 mr-1.5" />
-                        Collaborators ({members.length})
-                      </button>
-                      <span className="text-xs text-slate-400 font-mono">#{selectedProject.id}</span>
-                    </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm space-y-3.5">
+                {/* Compact Project Header Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-1">
+                  <div className="flex items-center space-x-2.5 min-w-0">
+                    <h2 className="text-lg font-bold text-slate-900 truncate" title={selectedProject.name}>
+                      {selectedProject.name}
+                    </h2>
+                    <span className="text-xs text-slate-400 font-mono flex-shrink-0">
+                      #{selectedProject.id}
+                    </span>
                   </div>
-                  {selectedProject.description && (
-                    <p className="text-sm text-slate-600 mt-1">{selectedProject.description}</p>
-                  )}
+
+                  <div className="flex items-center space-x-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowProjectCriteria(!showProjectCriteria)}
+                      className={`inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg border transition ${
+                        showProjectCriteria
+                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                          : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                      }`}
+                      title="View or hide project research question and scope"
+                    >
+                      <Info className="w-3.5 h-3.5 mr-1" />
+                      <span>Scope & Criteria</span>
+                      {showProjectCriteria ? (
+                        <ChevronUp className="w-3 h-3 ml-1" />
+                      ) : (
+                        <ChevronDown className="w-3 h-3 ml-1" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowMembersModal(true)}
+                      className="inline-flex items-center px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 transition"
+                    >
+                      <Users className="w-3.5 h-3.5 mr-1.5 text-slate-500" />
+                      Collaborators ({members.length})
+                    </button>
+                  </div>
                 </div>
 
-                {/* Research Question & Criteria Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-100">
-                  <div>
-                    <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">
-                      Research Question
-                    </h4>
-                    <p className="text-sm text-slate-800 mt-1 font-medium">
-                      {selectedProject.research_question || 'Not specified'}
-                    </p>
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">
-                      Declared Scope
-                    </h4>
-                    <p className="text-sm text-slate-800 mt-1 font-medium">
-                      {selectedProject.scope || 'Not specified'}
-                    </p>
-                  </div>
-                  {selectedProject.inclusion_criteria && (
+                {selectedProject.description && (
+                  <p className="text-xs text-slate-600">{selectedProject.description}</p>
+                )}
+
+                {/* Collapsible Scope & Criteria Drawer (No longer taking 120px of fixed vertical space) */}
+                {showProjectCriteria && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs animate-in fade-in duration-150">
                     <div>
-                      <h4 className="text-xs font-bold uppercase text-emerald-700 tracking-wider">
-                        Inclusion Criteria
+                      <h4 className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">
+                        Research Question
                       </h4>
-                      <p className="text-xs text-slate-700 mt-1">
-                        {selectedProject.inclusion_criteria}
+                      <p className="text-xs text-slate-800 mt-0.5 font-medium">
+                        {selectedProject.research_question || 'Not specified'}
                       </p>
                     </div>
-                  )}
-                  {selectedProject.exclusion_criteria && (
                     <div>
-                      <h4 className="text-xs font-bold uppercase text-rose-700 tracking-wider">
-                        Exclusion Criteria
+                      <h4 className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">
+                        Declared Scope
                       </h4>
-                      <p className="text-xs text-slate-700 mt-1">
-                        {selectedProject.exclusion_criteria}
+                      <p className="text-xs text-slate-800 mt-0.5 font-medium">
+                        {selectedProject.scope || 'Not specified'}
                       </p>
                     </div>
-                  )}
+                    {selectedProject.inclusion_criteria && (
+                      <div>
+                        <h4 className="text-[10px] font-bold uppercase text-emerald-700 tracking-wider">
+                          Inclusion Criteria
+                        </h4>
+                        <p className="text-xs text-slate-700 mt-0.5">
+                          {selectedProject.inclusion_criteria}
+                        </p>
+                      </div>
+                    )}
+                    {selectedProject.exclusion_criteria && (
+                      <div>
+                        <h4 className="text-[10px] font-bold uppercase text-rose-700 tracking-wider">
+                          Exclusion Criteria
+                        </h4>
+                        <p className="text-xs text-slate-700 mt-0.5">
+                          {selectedProject.exclusion_criteria}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Workspace Tabs (Directly below project header) */}
+                <div className="flex border-b border-slate-200 space-x-6">
+                  <button
+                    onClick={() => setActiveTab('papers')}
+                    className={`pb-2.5 text-xs sm:text-sm font-semibold border-b-2 flex items-center transition ${
+                      activeTab === 'papers'
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4 mr-2" />
+                    Papers Collection ({curatedPapers.length})
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('qa')}
+                    className={`pb-2.5 text-xs sm:text-sm font-semibold border-b-2 flex items-center transition ${
+                      activeTab === 'qa'
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Research Q&A (RAG)
+                  </button>
                 </div>
 
-                {/* Papers in Collection */}
-                <div>
-                  <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-semibold text-slate-900 text-sm">
-                      Papers in Project Collection ({curatedPapers.length})
-                    </h3>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => setShowSearchLibraryModal(true)}
-                        className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition"
-                      >
-                        <Search className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                        Search Library
-                      </button>
-                      <button
-                        onClick={() => setShowUploadModal(true)}
-                        className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition"
-                      >
-                        <Upload className="w-3.5 h-3.5 mr-1 text-indigo-600" />
-                        Add PDF
-                      </button>
-                    </div>
-                  </div>
-
-                  {curatedPapers.length === 0 ? (
-                    <div className="border border-dashed border-slate-200 rounded-lg p-8 text-center text-slate-400 text-sm">
-                      <p>No papers have been added to this project yet.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {curatedPapers.map((cp) => (
-                        <div
-                          key={cp.link_id}
-                          className="border border-slate-200 rounded-lg p-4 hover:border-slate-300 transition"
-                        >
-                          <div className="flex justify-between items-start gap-4">
-                            <div className="space-y-1 flex-1">
-                              <h4 className="font-medium text-slate-900 text-sm">{cp.title}</h4>
-                              <p className="text-xs text-slate-500">
-                                {cp.authors || 'Unknown authors'} {cp.year ? `(${cp.year})` : ''}
-                                {cp.doi && <span className="ml-2 font-mono">DOI: {cp.doi}</span>}
-                              </p>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    const p = await api.getPapers();
-                                    const target = p.find((x) => x.id === cp.paper_id);
-                                    if (target) setReadingPaper(target);
-                                    else alert('Paper details not found');
-                                  } catch (err: any) {
-                                    alert('Failed to load paper reader: ' + err.message);
-                                  }
-                                }}
-                                className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition"
-                              >
-                                <BookOpen className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                                Read
-                              </button>
-                              <span
-                                className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${
-                                  cp.inclusion_status === 'included'
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                    : cp.inclusion_status === 'candidate'
-                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                    : 'bg-rose-50 text-rose-700 border border-rose-200'
-                                }`}
-                              >
-                                {cp.inclusion_status}
-                              </span>
-                            </div>
+                {/* Tab Content */}
+                {activeTab === 'papers' ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-1">
+                      <div className="flex items-center space-x-3">
+                        <h3 className="font-semibold text-slate-900 text-sm">
+                          Curated Evidence Papers ({curatedPapers.length})
+                        </h3>
+                        {curatedPapers.length > 0 && (
+                          <div className="flex items-center space-x-2 text-xs">
+                            <button
+                              type="button"
+                              onClick={handleExpandAllPapers}
+                              className="text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
+                            >
+                              Expand All
+                            </button>
+                            <span className="text-slate-300">•</span>
+                            <button
+                              type="button"
+                              onClick={handleCollapseAllPapers}
+                              className="text-slate-500 hover:text-slate-700 font-medium cursor-pointer"
+                            >
+                              Minimize All
+                            </button>
                           </div>
-                          {cp.notes && (
-                            <div className="mt-2 text-xs bg-slate-50 p-2 rounded border border-slate-100 text-slate-600">
-                              <span className="font-semibold text-slate-700">Notes: </span>
-                              {cp.notes}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => setShowSearchLibraryModal(true)}
+                          className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition"
+                        >
+                          <Search className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                          Search Library
+                        </button>
+                        <button
+                          onClick={() => setShowUploadModal(true)}
+                          className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition"
+                        >
+                          <Upload className="w-3.5 h-3.5 mr-1 text-indigo-600" />
+                          Add PDF
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    {curatedPapers.length === 0 ? (
+                      <div className="border border-dashed border-slate-200 rounded-lg p-8 text-center text-slate-400 text-sm">
+                        <p>No papers have been added to this project yet.</p>
+                      </div>
+                    ) : (
+                      /* Lazy Column of Collapsible Curated Papers */
+                      <div className="max-h-[calc(100vh-320px)] overflow-y-auto space-y-2.5 pr-1">
+                        {curatedPapers.map((cp) => {
+                          const isExpanded = expandedPaperIds.includes(cp.paper_id);
+
+                          return (
+                            <div
+                              key={cp.link_id}
+                              className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-xs hover:border-slate-300 transition"
+                            >
+                              {/* Minimized Header Row: Question/Paper Title Only (Point 3) */}
+                              <div
+                                onClick={() => toggleExpandPaper(cp.paper_id)}
+                                className="p-3.5 bg-slate-50/70 hover:bg-slate-100/70 flex justify-between items-center gap-3 cursor-pointer select-none transition"
+                              >
+                                <div className="flex items-center space-x-2.5 flex-1 min-w-0">
+                                  <div className="text-slate-400 hover:text-slate-600 p-0.5 flex-shrink-0">
+                                    {isExpanded ? (
+                                      <ChevronDown className="w-4 h-4 text-indigo-600" />
+                                    ) : (
+                                      <ChevronRight className="w-4 h-4" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <h4
+                                      className="font-semibold text-slate-900 text-sm truncate"
+                                      title={cp.title}
+                                    >
+                                      {cp.title}
+                                    </h4>
+                                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                      {cp.authors || 'Unknown authors'} {cp.year ? `(${cp.year})` : ''}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center space-x-1.5 flex-shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleRemovePaperFromStudy(e, cp.paper_id, cp.title)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                    title="Remove from this study (keeps paper in Master Library)"
+                                    aria-label="Remove paper from study"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Expanded Details Body */}
+                              {isExpanded && (
+                                <div className="p-4 border-t border-slate-100 bg-white space-y-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                      {cp.doi && (
+                                        <span className="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                                          DOI: {cp.doi}
+                                        </span>
+                                      )}
+                                      {cp.date_added && (
+                                        <span className="flex items-center text-slate-400">
+                                          <Calendar className="w-3.5 h-3.5 mr-1 text-slate-400" />
+                                          Added {new Date(cp.date_added).toLocaleDateString()}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenPaperReader(cp.paper_id);
+                                      }}
+                                      className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition shadow-xs"
+                                    >
+                                      <BookOpen className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
+                                      Read Document
+                                    </button>
+                                  </div>
+
+                                  {cp.notes && (
+                                    <div className="text-xs bg-slate-50 p-3 rounded-lg border border-slate-100 text-slate-600">
+                                      <span className="font-semibold text-slate-800">
+                                        Project Notes:{' '}
+                                      </span>
+                                      {cp.notes}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <ProjectQAWorkspace
+                    project={selectedProject}
+                    onOpenPaperReader={handleOpenPaperReader}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -381,9 +769,19 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-5">
             <div className="flex justify-between items-baseline border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900">Project Collaborators</h3>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-lg font-bold text-slate-900">Project Collaborators</h3>
+                <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full font-medium">
+                  {members.length} {members.length === 1 ? 'member' : 'members'}
+                </span>
+              </div>
               <button
-                onClick={() => setShowMembersModal(false)}
+                onClick={() => {
+                  setShowMembersModal(false);
+                  setInviteWarning(null);
+                  setInviteError(null);
+                  setInviteSuccess(false);
+                }}
                 className="text-xs font-semibold text-slate-500 hover:text-slate-800"
               >
                 Close
@@ -392,7 +790,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
 
             {/* Invite New Collaborator Form (Owners Only) */}
             {isOwner && (
-              <form onSubmit={handleInviteMember} className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
+              <form onSubmit={handleInviteMember} className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
                 <h4 className="text-xs font-bold uppercase text-slate-600 tracking-wider flex items-center">
                   <UserPlus className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
                   Invite Collaborator
@@ -403,24 +801,56 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                     required
                     placeholder="colleague@university.edu"
                     value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onChange={(e) => {
+                      setInviteEmail(e.target.value);
+                      if (inviteWarning) setInviteWarning(null);
+                      if (inviteError) setInviteError(null);
+                    }}
                     className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
                   />
                   <select
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value)}
-                    className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none"
+                    className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none cursor-pointer"
                   >
                     <option value="editor">Editor</option>
                     <option value="viewer">Viewer</option>
                   </select>
                   <button
                     type="submit"
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition"
+                    disabled={inviteSuccess}
+                    className={`inline-flex items-center justify-center min-w-[76px] px-3 py-1.5 text-xs font-semibold rounded-lg shadow-xs transition-all duration-200 ${
+                      inviteSuccess
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                    }`}
                   >
-                    Invite
+                    {inviteSuccess ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 mr-1 stroke-[2.5]" />
+                        Invited!
+                      </>
+                    ) : (
+                      'Invite'
+                    )}
                   </button>
                 </div>
+
+                {/* Inline warning for already-existing collaborator */}
+                {inviteWarning && (
+                  <div className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg animate-in fade-in">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span>{inviteWarning}</span>
+                  </div>
+                )}
+
+                {/* Inline error for invitation failure */}
+                {inviteError && (
+                  <div className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-lg animate-in fade-in">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span>{inviteError}</span>
+                  </div>
+                )}
               </form>
             )}
 
@@ -438,17 +868,32 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                     <p className="text-[11px] text-slate-500">{m.email}</p>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <span
-                      className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border ${
-                        m.role === 'owner'
-                          ? 'bg-purple-50 text-purple-700 border-purple-200'
-                          : m.role === 'editor'
-                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                          : 'bg-slate-100 text-slate-600 border-slate-200'
-                      }`}
-                    >
-                      {m.role}
-                    </span>
+                    {m.role === 'owner' ? (
+                      <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border bg-purple-50 text-purple-700 border-purple-200">
+                        OWNER
+                      </span>
+                    ) : isOwner ? (
+                      <select
+                        value={m.role}
+                        disabled={updatingRoleId === m.user_id}
+                        onChange={(e) => handleUpdateMemberRole(m.user_id, e.target.value)}
+                        className="text-[10px] font-bold uppercase px-2 py-1 rounded-lg border border-slate-300 bg-white text-slate-700 hover:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
+                        title="Change collaborator access role"
+                      >
+                        <option value="editor">EDITOR</option>
+                        <option value="viewer">VIEWER</option>
+                      </select>
+                    ) : (
+                      <span
+                        className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                          m.role === 'editor'
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        {m.role}
+                      </span>
+                    )}
                     {isOwner && m.role !== 'owner' && (
                       <button
                         onClick={() => handleRemoveMember(m.user_id)}
@@ -592,7 +1037,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
       {readingPaper && (
         <PaperReaderModal
           paper={readingPaper}
-          onClose={() => setReadingPaper(null)}
+          initialPage={readingPage}
+          onClose={() => {
+            setReadingPaper(null);
+            setReadingPage(undefined);
+          }}
           onPaperUpdated={() => {
             if (selectedProject) loadProjectDetails(selectedProject.id);
           }}

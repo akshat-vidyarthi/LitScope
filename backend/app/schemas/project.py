@@ -15,6 +15,7 @@ class ProjectCreate(BaseModel):
 class ProjectResponse(ProjectCreate):
     id: int
     owner_id: Optional[int] = None
+    member_count: Optional[int] = 0
     created_at: datetime
     updated_at: datetime
 
@@ -43,6 +44,10 @@ class ProjectMemberAdd(BaseModel):
     role: str = Field("viewer", description="Role to assign: editor or viewer")
 
 
+class ProjectMemberUpdate(BaseModel):
+    role: str = Field(..., description="Role to assign: editor or viewer")
+
+
 class ProjectMemberResponse(BaseModel):
     membership_id: int
     project_id: int
@@ -50,4 +55,36 @@ class ProjectMemberResponse(BaseModel):
     email: str
     full_name: Optional[str] = None
     role: str
+    created_at: datetime
+
+
+class RetrievalQuery(BaseModel):
+    query: str = Field(..., min_length=2, max_length=1000, description="Research question or topic to search")
+    top_k: int = Field(default=5, ge=1, le=20, description="Number of relevant chunks to retrieve")
+
+
+class RetrievedChunkResponse(BaseModel):
+    chunk_id: int
+    paper_id: int
+    paper_title: str
+    paper_authors: Optional[str] = None
+    paper_year: Optional[int] = None
+    page_number: int
+    content: str
+    score: float
+    citation: str
+
+
+class ProjectAskRequest(BaseModel):
+    question: str = Field(..., min_length=2, max_length=2000, description="Research question to ask about project papers")
+    top_k: int = Field(default=5, ge=1, le=15, description="Number of supporting passages to retrieve")
+
+
+class ProjectQueryResponse(BaseModel):
+    id: int
+    project_id: int
+    question: str
+    answer: str
+    citations: list[str]
+    retrieved_chunks: list[RetrievedChunkResponse]
     created_at: datetime

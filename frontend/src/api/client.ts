@@ -16,6 +16,7 @@ export interface Project {
   inclusion_criteria?: string;
   exclusion_criteria?: string;
   owner_id?: number;
+  member_count?: number;
   created_at: string;
 }
 
@@ -82,6 +83,28 @@ export interface CuratedPaper {
   inclusion_status: string;
   notes?: string;
   date_added: string;
+}
+
+export interface RetrievedChunk {
+  chunk_id: number;
+  paper_id: number;
+  paper_title: string;
+  paper_authors?: string;
+  paper_year?: number;
+  page_number: number;
+  content: string;
+  score: number;
+  citation: string;
+}
+
+export interface ProjectQuery {
+  id: number;
+  project_id: number;
+  question: string;
+  answer: string;
+  citations: string[];
+  retrieved_chunks: RetrievedChunk[];
+  created_at: string;
 }
 
 const API_BASE = '/api/v1';
@@ -216,6 +239,19 @@ export const api = {
     if (!res.ok) throw new Error('Failed to remove member');
   },
 
+  updateProjectMemberRole: async (projectId: number, userId: number, role: string): Promise<ProjectMember> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/members/${userId}`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ role }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to update member role');
+    }
+    return res.json();
+  },
+
   // Project Curation
   getCuratedPapers: async (projectId: number): Promise<CuratedPaper[]> => {
     const res = await fetch(`${API_BASE}/projects/${projectId}/papers`, {
@@ -245,6 +281,17 @@ export const api = {
       throw new Error(err.detail || 'Failed to curate paper');
     }
     return res.json();
+  },
+
+  removeCuratedPaper: async (projectId: number, paperId: number): Promise<void> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/papers/${paperId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to remove paper from project');
+    }
   },
 
   // Master Library Papers
@@ -333,5 +380,56 @@ export const api = {
       throw new Error(err.detail || 'Failed to update paper');
     }
     return res.json();
+  },
+
+  // Project RAG & Grounded Synthesis
+  retrieveProjectEvidence: async (
+    projectId: number,
+    query: string,
+    limit: number = 5
+  ): Promise<RetrievedChunk[]> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/retrieve`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ query, limit }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to retrieve project evidence');
+    }
+    return res.json();
+  },
+
+  askProjectQuestion: async (
+    projectId: number,
+    question: string,
+    limit: number = 5
+  ): Promise<ProjectQuery> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/ask`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ question, limit }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to synthesize answer');
+    }
+    return res.json();
+  },
+
+  getProjectQueries: async (projectId: number): Promise<ProjectQuery[]> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/queries`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch project queries');
+    return res.json();
+  },
+
+  deleteProjectQuery: async (projectId: number, queryId: number): Promise<void> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/queries/${queryId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to delete query');
   },
 };

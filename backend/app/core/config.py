@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     # Storage configuration
     LOCAL_STORAGE_PATH: str = "./data/storage"
 
+    # LLM & Generation Configuration
+    LLM_PROVIDER: str = "auto"  # auto, ollama, gemini, groq, openai, extractive
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3:latest"
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GROQ_API_KEY: str | None = None
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
+    OPENAI_API_KEY: str | None = None
+    OPENAI_BASE_URL: str | None = None
+    OPENAI_MODEL: str = "gpt-4o-mini"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -21,6 +21,8 @@ from app.ingestion.storage import (
     save_pdf_to_disk,
 )
 from app.ingestion.pdf_extractor import extract_pdf_data
+from app.ingestion.chunker import chunk_paper_pages, calculate_chunk_hash
+from app.ingestion.embedder import embed_texts
 
 router = APIRouter(prefix="/papers", tags=["Master Library"])
 
@@ -359,6 +361,38 @@ async def upload_paper_pdf(
             }
         )
 
+    # 10. Generate and insert semantic chunks with page provenance and embeddings
+    chunks = chunk_paper_pages(extracted["pages"])
+    if chunks:
+        chunk_texts = [c["content"] for c in chunks]
+        vectors = embed_texts(chunk_texts)
+        for c, vec in zip(chunks, vectors):
+            c_hash = calculate_chunk_hash(version_id, c["page_number"], c["chunk_index"], c["content"])
+            db.execute(
+                text("""
+                    INSERT INTO paper_chunks (
+                        paper_id, paper_version_id, page_number, chunk_index,
+                        content, character_start, character_end, content_hash, embedding
+                    )
+                    VALUES (
+                        :paper_id, :version_id, :page_number, :chunk_index,
+                        :content, :character_start, :character_end, :content_hash, CAST(:embedding AS JSONB)
+                    )
+                    ON CONFLICT (paper_version_id, chunk_index) DO NOTHING;
+                """),
+                {
+                    "paper_id": paper_id,
+                    "version_id": version_id,
+                    "page_number": c["page_number"],
+                    "chunk_index": c["chunk_index"],
+                    "content": c["content"],
+                    "character_start": c["character_start"],
+                    "character_end": c["character_end"],
+                    "content_hash": c_hash,
+                    "embedding": json.dumps(vec),
+                }
+            )
+
     # 10. Link to project if requested
     if project_id is not None:
         db.execute(
@@ -639,6 +673,7 @@ def retry_paper_extraction(
     extracted = extract_pdf_data(file_bytes)
 
     # Delete existing pages for this version and re-insert
+    db.execute(text("DELETE FROM paper_chunks WHERE paper_version_id = :vid;"), {"vid": ver["id"]})
     db.execute(text("DELETE FROM paper_pages WHERE paper_version_id = :vid;"), {"vid": ver["id"]})
 
     for p in extracted["pages"]:
@@ -654,6 +689,38 @@ def retry_paper_extraction(
                 "character_count": p["character_count"],
             }
         )
+
+    # Re-generate and insert semantic chunks with embeddings
+    retry_chunks = chunk_paper_pages(extracted["pages"])
+    if retry_chunks:
+        retry_texts = [c["content"] for c in retry_chunks]
+        retry_vectors = embed_texts(retry_texts)
+        for c, vec in zip(retry_chunks, retry_vectors):
+            c_hash = calculate_chunk_hash(ver["id"], c["page_number"], c["chunk_index"], c["content"])
+            db.execute(
+                text("""
+                    INSERT INTO paper_chunks (
+                        paper_id, paper_version_id, page_number, chunk_index,
+                        content, character_start, character_end, content_hash, embedding
+                    )
+                    VALUES (
+                        :paper_id, :version_id, :page_number, :chunk_index,
+                        :content, :character_start, :character_end, :content_hash, CAST(:embedding AS JSONB)
+                    )
+                    ON CONFLICT (paper_version_id, chunk_index) DO NOTHING;
+                """),
+                {
+                    "paper_id": paper_id,
+                    "version_id": ver["id"],
+                    "page_number": c["page_number"],
+                    "chunk_index": c["chunk_index"],
+                    "content": c["content"],
+                    "character_start": c["character_start"],
+                    "character_end": c["character_end"],
+                    "content_hash": c_hash,
+                    "embedding": json.dumps(vec),
+                }
+            )
 
     # Update version status
     updated_ver = db.execute(
