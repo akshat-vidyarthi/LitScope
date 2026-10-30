@@ -56,3 +56,9 @@ models/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Agent & Customization Rules (Machine-local only; never commit or push)
+GEMINI.md
+AGENTS.md
+.agents/
+.agent/
