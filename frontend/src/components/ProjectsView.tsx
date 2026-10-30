@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, ArrowRight, Users, Trash2, Shield, UserPlus } from 'lucide-react';
-import { api, Project, CuratedPaper, ProjectMember, User } from '../api/client';
+import { Plus, Folder, ArrowRight, Users, Trash2, Shield, UserPlus, Upload, BookOpen, Search } from 'lucide-react';
+import { api, Project, CuratedPaper, ProjectMember, User, Paper } from '../api/client';
+import { UploadPdfModal } from './UploadPdfModal';
+import { PaperReaderModal } from './PaperReaderModal';
+import { SearchLibraryModal } from './SearchLibraryModal';
 
 interface ProjectsViewProps {
   currentUser: User | null;
@@ -15,6 +18,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showSearchLibraryModal, setShowSearchLibraryModal] = useState(false);
+  const [readingPaper, setReadingPaper] = useState<Paper | null>(null);
 
   // Invite Form
   const [inviteEmail, setInviteEmail] = useState('');
@@ -280,22 +286,33 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                   )}
                 </div>
 
-                {/* Curated Papers List */}
+                {/* Papers in Collection */}
                 <div>
                   <div className="flex justify-between items-center mb-3">
                     <h3 className="font-semibold text-slate-900 text-sm">
-                      Curated Papers in Collection ({curatedPapers.length})
+                      Papers in Project Collection ({curatedPapers.length})
                     </h3>
-                    <span className="text-xs text-slate-400">
-                      Curate papers from the Master Library tab
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => setShowSearchLibraryModal(true)}
+                        className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition"
+                      >
+                        <Search className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                        Search Library
+                      </button>
+                      <button
+                        onClick={() => setShowUploadModal(true)}
+                        className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition"
+                      >
+                        <Upload className="w-3.5 h-3.5 mr-1 text-indigo-600" />
+                        Add PDF
+                      </button>
+                    </div>
                   </div>
 
                   {curatedPapers.length === 0 ? (
-                    <div className="border border-dashed border-slate-200 rounded-lg p-6 text-center text-slate-400 text-sm">
-                      No papers have been curated into this project yet. Go to the{' '}
-                      <span className="font-semibold text-indigo-600">Master Library</span> tab to
-                      add papers.
+                    <div className="border border-dashed border-slate-200 rounded-lg p-8 text-center text-slate-400 text-sm">
+                      <p>No papers have been added to this project yet.</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -304,25 +321,43 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                           key={cp.link_id}
                           className="border border-slate-200 rounded-lg p-4 hover:border-slate-300 transition"
                         >
-                          <div className="flex justify-between items-start">
-                            <div className="space-y-1">
+                          <div className="flex justify-between items-start gap-4">
+                            <div className="space-y-1 flex-1">
                               <h4 className="font-medium text-slate-900 text-sm">{cp.title}</h4>
                               <p className="text-xs text-slate-500">
                                 {cp.authors || 'Unknown authors'} {cp.year ? `(${cp.year})` : ''}
                                 {cp.doi && <span className="ml-2 font-mono">DOI: {cp.doi}</span>}
                               </p>
                             </div>
-                            <span
-                              className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${
-                                cp.inclusion_status === 'included'
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : cp.inclusion_status === 'candidate'
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
-                              }`}
-                            >
-                              {cp.inclusion_status}
-                            </span>
+                            <div className="flex items-center space-x-2">
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    const p = await api.getPapers();
+                                    const target = p.find((x) => x.id === cp.paper_id);
+                                    if (target) setReadingPaper(target);
+                                    else alert('Paper details not found');
+                                  } catch (err: any) {
+                                    alert('Failed to load paper reader: ' + err.message);
+                                  }
+                                }}
+                                className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition"
+                              >
+                                <BookOpen className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                                Read
+                              </button>
+                              <span
+                                className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${
+                                  cp.inclusion_status === 'included'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : cp.inclusion_status === 'candidate'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                }`}
+                              >
+                                {cp.inclusion_status}
+                              </span>
+                            </div>
                           </div>
                           {cp.notes && (
                             <div className="mt-2 text-xs bg-slate-50 p-2 rounded border border-slate-100 text-slate-600">
@@ -528,6 +563,40 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
             </form>
           </div>
         </div>
+      )}
+      {/* Upload PDF Modal */}
+      {showUploadModal && selectedProject && (
+        <UploadPdfModal
+          projects={projects}
+          defaultProjectId={selectedProject.id}
+          onClose={() => setShowUploadModal(false)}
+          onSuccess={() => {
+            loadProjectDetails(selectedProject.id);
+          }}
+        />
+      )}
+
+      {/* Search Master Library Modal */}
+      {showSearchLibraryModal && selectedProject && (
+        <SearchLibraryModal
+          project={selectedProject}
+          curatedPapers={curatedPapers}
+          onClose={() => setShowSearchLibraryModal(false)}
+          onPaperAdded={() => {
+            loadProjectDetails(selectedProject.id);
+          }}
+        />
+      )}
+
+      {/* Document Reader Modal */}
+      {readingPaper && (
+        <PaperReaderModal
+          paper={readingPaper}
+          onClose={() => setReadingPaper(null)}
+          onPaperUpdated={() => {
+            if (selectedProject) loadProjectDetails(selectedProject.id);
+          }}
+        />
       )}
     </div>
   );

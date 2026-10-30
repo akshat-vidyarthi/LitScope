@@ -37,9 +37,11 @@ pnpm-debug.log*
 # Database & Storage
 *.sqlite3
 *.db
-data/storage/
-data/uploads/
-data/cache/
+data/
+backend/data/
+**/data/storage/
+**/data/uploads/
+**/data/cache/
 
 # Local Model Weights & Cache
 models/

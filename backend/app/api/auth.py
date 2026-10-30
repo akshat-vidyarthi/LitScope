@@ -29,8 +29,10 @@ def register_user(payload: UserRegister, db: Session = Depends(get_db)):
             detail=f"An account with email '{email_clean}' already exists."
         )
 
-    # 2. Check total users count: first user becomes owner
-    user_count = db.execute(text("SELECT COUNT(*) FROM users;")).scalar() or 0
+    # 2. Check non-test users count: first real user becomes owner
+    user_count = db.execute(
+        text("SELECT COUNT(*) FROM users WHERE email NOT LIKE '%@example.com';")
+    ).scalar() or 0
     assigned_role = "owner" if user_count == 0 else "viewer"
 
     # 3. Hash password

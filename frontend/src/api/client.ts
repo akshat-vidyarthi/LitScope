@@ -29,6 +29,27 @@ export interface ProjectMember {
   created_at: string;
 }
 
+export interface PaperVersion {
+  id: number;
+  paper_id: number;
+  file_path: string;
+  file_checksum: string;
+  file_size_bytes: number;
+  page_count: number;
+  extraction_status: 'completed' | 'scanned_image_only' | 'failed' | 'pending';
+  error_message?: string;
+  created_at: string;
+}
+
+export interface PaperPage {
+  id: number;
+  paper_version_id: number;
+  page_number: number;
+  content: string;
+  character_count: number;
+  created_at: string;
+}
+
 export interface Paper {
   id: number;
   title: string;
@@ -39,6 +60,15 @@ export interface Paper {
   abstract?: string;
   access_status: string;
   created_at: string;
+  latest_version?: PaperVersion;
+}
+
+export interface PaperUploadResponse {
+  paper: Paper;
+  version: PaperVersion;
+  pages_extracted: number;
+  is_duplicate: boolean;
+  message: string;
 }
 
 export interface CuratedPaper {
@@ -61,6 +91,15 @@ const getAuthHeaders = (): HeadersInit => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+const getAuthHeadersNoContentType = (): HeadersInit => {
+  const token = localStorage.getItem('litscope_token');
+  const headers: Record<string, string> = {};
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -213,7 +252,9 @@ export const api = {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     if (year) params.append('year', year.toString());
-    const res = await fetch(`${API_BASE}/papers?${params.toString()}`);
+    const res = await fetch(`${API_BASE}/papers?${params.toString()}`, {
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) throw new Error('Failed to fetch papers');
     return res.json();
   },
@@ -227,6 +268,69 @@ export const api = {
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || 'Failed to add paper');
+    }
+    return res.json();
+  },
+
+  uploadPdf: async (formData: FormData): Promise<PaperUploadResponse> => {
+    const res = await fetch(`${API_BASE}/papers/upload`, {
+      method: 'POST',
+      headers: getAuthHeadersNoContentType(),
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to upload PDF');
+    }
+    return res.json();
+  },
+
+  getPaperPages: async (paperId: number, versionId?: number): Promise<PaperPage[]> => {
+    const url = versionId
+      ? `${API_BASE}/papers/${paperId}/pages?version_id=${versionId}`
+      : `${API_BASE}/papers/${paperId}/pages`;
+    const res = await fetch(url, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch paper pages');
+    return res.json();
+  },
+
+  downloadPaperPdfBlob: async (paperId: number, versionId?: number): Promise<Blob> => {
+    const url = versionId
+      ? `${API_BASE}/papers/${paperId}/pdf?version_id=${versionId}`
+      : `${API_BASE}/papers/${paperId}/pdf`;
+    const res = await fetch(url, {
+      headers: getAuthHeadersNoContentType(),
+    });
+    if (!res.ok) throw new Error('Failed to download PDF');
+    return res.blob();
+  },
+
+  retryExtraction: async (paperId: number): Promise<PaperVersion> => {
+    const res = await fetch(`${API_BASE}/papers/${paperId}/retry`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to retry extraction');
+    }
+    return res.json();
+  },
+
+  updatePaper: async (
+    paperId: number,
+    data: { title?: string; authors?: string; year?: number; venue?: string; abstract?: string }
+  ): Promise<Paper> => {
+    const res = await fetch(`${API_BASE}/papers/${paperId}`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to update paper');
     }
     return res.json();
   },

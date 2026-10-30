@@ -1,12 +1,85 @@
+import os
+import json
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.schemas.paper import PaperCreate, PaperResponse
+from app.schemas.paper import (
+    PaperCreate,
+    PaperUpdate,
+    PaperResponse,
+    PaperVersionResponse,
+    PaperPageResponse,
+    PaperUploadResponse,
+)
+from app.ingestion.storage import (
+    validate_pdf_content,
+    calculate_sha256,
+    save_pdf_to_disk,
+)
+from app.ingestion.pdf_extractor import extract_pdf_data
 
 router = APIRouter(prefix="/papers", tags=["Master Library"])
+
+
+def _row_to_paper_response(row: dict) -> dict:
+    """Helper to convert flat query row with version fields into nested PaperResponse structure."""
+    version = None
+    if row.get("version_id") is not None:
+        version = {
+            "id": row["version_id"],
+            "paper_id": row["id"],
+            "file_path": row["file_path"],
+            "file_checksum": row["file_checksum"],
+            "file_size_bytes": row["file_size_bytes"],
+            "page_count": row["page_count"],
+            "extraction_status": row["extraction_status"],
+            "error_message": row["error_message"],
+            "created_at": row["version_created_at"],
+        }
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "normalized_title": row["normalized_title"],
+        "doi": row["doi"],
+        "authors": row["authors"],
+        "year": row["year"],
+        "venue": row["venue"],
+        "abstract": row["abstract"],
+        "source_url": row["source_url"],
+        "access_status": row["access_status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "latest_version": version,
+    }
+
+
+def check_paper_access(paper_id: int, current_user: dict, db: Session) -> None:
+    """Verifies user has permission to access a paper."""
+    if current_user.get("role") == "owner":
+        return
+
+    # Collaborator check: must belong to at least one project containing this paper, or have uploaded it
+    check = db.execute(
+        text("""
+            SELECT 1
+            FROM papers p
+            LEFT JOIN project_papers pp ON p.id = pp.paper_id
+            LEFT JOIN project_members pm ON pp.project_id = pm.project_id AND pm.user_id = :user_id
+            LEFT JOIN audit_events ae ON ae.action = 'paper_uploaded' AND (ae.details->>'paper_id')::int = p.id AND ae.user_id = :user_id
+            WHERE p.id = :paper_id AND (pm.user_id IS NOT NULL OR ae.user_id IS NOT NULL);
+        """),
+        {"paper_id": paper_id, "user_id": current_user["id"]}
+    ).fetchone()
+
+    if not check:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You do not have permission to access this paper."
+        )
 
 
 @router.post("", response_model=PaperResponse, status_code=status.HTTP_201_CREATED)
@@ -15,12 +88,7 @@ def add_paper_to_library(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Adds a canonical paper record to the master library.
-    Requires an authenticated user.
-    Checks for duplicates by DOI if present.
-    """
-    # 1. Check duplicate DOI
+    """Adds a canonical metadata record to the master library."""
     if payload.doi:
         existing = db.execute(
             text("SELECT id, title FROM papers WHERE doi = :doi;"),
@@ -32,10 +100,8 @@ def add_paper_to_library(
                 detail=f"Paper with DOI '{payload.doi}' already exists (ID: {existing['id']}: {existing['title']})."
             )
 
-    # 2. Normalize title for clean matching
     normalized = " ".join(payload.title.strip().lower().split())
 
-    # 3. Insert canonical record
     sql = text("""
         INSERT INTO papers (
             title, normalized_title, doi, authors, year,
@@ -67,7 +133,280 @@ def add_paper_to_library(
     )
     row = result.mappings().fetchone()
     db.commit()
-    return row
+    return _row_to_paper_response(dict(row))
+
+
+@router.post("/upload", response_model=PaperUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_paper_pdf(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    doi: Optional[str] = Form(None),
+    authors: Optional[str] = Form(None),
+    year: Optional[int] = Form(None),
+    project_id: Optional[int] = Form(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Uploads an academic PDF, computes SHA-256 checksum for deduplication,
+    extracts text and page numbers with PyMuPDF, detects scanned documents,
+    and stores versions and pages.
+    """
+    # 1. If project_id provided, verify write permission
+    if project_id is not None:
+        member = db.execute(
+            text("SELECT role FROM project_members WHERE project_id = :pid AND user_id = :uid;"),
+            {"pid": project_id, "uid": current_user["id"]}
+        ).mappings().fetchone()
+        if not member or member["role"] not in ["owner", "editor"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to add papers to this project."
+            )
+
+    # 2. Read raw file bytes and validate
+    content = await file.read()
+    try:
+        validate_pdf_content(content)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+    # 3. Extract text and page numbers using PyMuPDF and detect scanned image documents
+    extracted = extract_pdf_data(content)
+    if extracted["status"] == "scanned_image_only":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded PDF appears to be a scanned image or photo without selectable digital text. Only documents with readable text are supported."
+        )
+    if extracted["status"] == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=extracted.get("error_message") or "Failed to process the uploaded PDF document."
+        )
+
+    # 4. Compute checksum
+    checksum = calculate_sha256(content)
+
+    # 5. Check for duplicate version by SHA-256
+    existing_version_row = db.execute(
+        text("""
+            SELECT id, paper_id, file_path, file_checksum, file_size_bytes,
+                   page_count, extraction_status, error_message, created_at
+            FROM paper_versions
+            WHERE file_checksum = :checksum;
+        """),
+        {"checksum": checksum}
+    ).mappings().fetchone()
+
+    if existing_version_row:
+        paper_id = existing_version_row["paper_id"]
+        paper_row = db.execute(
+            text("SELECT * FROM papers WHERE id = :id;"),
+            {"id": paper_id}
+        ).mappings().fetchone()
+
+        # Update metadata if user provided manual overrides
+        updates = {}
+        if title and title.strip():
+            updates["title"] = title.strip()
+            updates["normalized_title"] = " ".join(title.strip().lower().split())
+        if year is not None:
+            updates["year"] = year
+        if authors and authors.strip():
+            updates["authors"] = authors.strip()
+
+        if updates:
+            set_clauses = [f"{k} = :{k}" for k in updates.keys()]
+            updates["id"] = paper_id
+            db.execute(
+                text(f"UPDATE papers SET {', '.join(set_clauses)}, updated_at = CURRENT_TIMESTAMP WHERE id = :id;"),
+                updates
+            )
+            db.commit()
+            paper_row = db.execute(
+                text("SELECT * FROM papers WHERE id = :id;"),
+                {"id": paper_id}
+            ).mappings().fetchone()
+
+        if project_id is not None:
+            db.execute(
+                text("""
+                    INSERT INTO project_papers (project_id, paper_id)
+                    VALUES (:pid, :paper_id)
+                    ON CONFLICT (project_id, paper_id) DO NOTHING;
+                """),
+                {"pid": project_id, "paper_id": paper_id}
+            )
+            db.commit()
+
+        page_count = db.execute(
+            text("SELECT count(*) FROM paper_pages WHERE paper_version_id = :vid;"),
+            {"vid": existing_version_row["id"]}
+        ).scalar() or 0
+
+        paper_dict = dict(paper_row)
+        paper_dict["version_id"] = existing_version_row["id"]
+        paper_dict["file_path"] = existing_version_row["file_path"]
+        paper_dict["file_checksum"] = existing_version_row["file_checksum"]
+        paper_dict["file_size_bytes"] = existing_version_row["file_size_bytes"]
+        paper_dict["page_count"] = existing_version_row["page_count"]
+        paper_dict["extraction_status"] = existing_version_row["extraction_status"]
+        paper_dict["error_message"] = existing_version_row["error_message"]
+        paper_dict["version_created_at"] = existing_version_row["created_at"]
+
+        return {
+            "paper": _row_to_paper_response(paper_dict),
+            "version": dict(existing_version_row),
+            "pages_extracted": page_count,
+            "is_duplicate": True,
+            "message": "This paper is already in your library."
+        }
+
+    # 6. Persist file to local disk
+    file_path, checksum, file_size = save_pdf_to_disk(content)
+
+    # 7. Resolve paper metadata
+    # Priority: explicit form parameter > PDF content/metadata > fallback
+    resolved_title = title or extracted["metadata"].get("title") or "Untitled Research Paper"
+    resolved_authors = authors or extracted["metadata"].get("author") or None
+    resolved_year = year or extracted["metadata"].get("year") or None
+    normalized_title = " ".join(resolved_title.strip().lower().split())
+
+    # Check if a canonical paper already matches DOI or normalized title
+    paper_row = None
+    if doi:
+        paper_row = db.execute(
+            text("SELECT * FROM papers WHERE doi = :doi;"),
+            {"doi": doi.strip()}
+        ).mappings().fetchone()
+
+    if not paper_row:
+        paper_row = db.execute(
+            text("SELECT * FROM papers WHERE normalized_title = :normalized;"),
+            {"normalized": normalized_title}
+        ).mappings().fetchone()
+
+    if not paper_row:
+        # Create canonical paper record
+        sql_insert_paper = text("""
+            INSERT INTO papers (
+                title, normalized_title, doi, authors, year, access_status
+            )
+            VALUES (
+                :title, :normalized_title, :doi, :authors, :year, 'full_text_available'
+            )
+            RETURNING *;
+        """)
+        paper_row = db.execute(
+            sql_insert_paper,
+            {
+                "title": resolved_title.strip(),
+                "normalized_title": normalized_title,
+                "doi": doi.strip() if doi else None,
+                "authors": resolved_authors,
+                "year": resolved_year,
+            }
+        ).mappings().fetchone()
+
+    paper_id = paper_row["id"]
+
+    # 8. Create paper_versions record
+    sql_insert_version = text("""
+        INSERT INTO paper_versions (
+            paper_id, file_path, file_checksum, file_size_bytes,
+            page_count, extraction_status, error_message
+        )
+        VALUES (
+            :paper_id, :file_path, :file_checksum, :file_size_bytes,
+            :page_count, :extraction_status, :error_message
+        )
+        RETURNING *;
+    """)
+    version_row = db.execute(
+        sql_insert_version,
+        {
+            "paper_id": paper_id,
+            "file_path": file_path,
+            "file_checksum": checksum,
+            "file_size_bytes": file_size,
+            "page_count": extracted["page_count"],
+            "extraction_status": extracted["status"],
+            "error_message": extracted["error_message"],
+        }
+    ).mappings().fetchone()
+
+    version_id = version_row["id"]
+
+    # 9. Insert extracted pages
+    for p in extracted["pages"]:
+        db.execute(
+            text("""
+                INSERT INTO paper_pages (
+                    paper_version_id, page_number, content, character_count
+                )
+                VALUES (
+                    :version_id, :page_number, :content, :character_count
+                );
+            """),
+            {
+                "version_id": version_id,
+                "page_number": p["page_number"],
+                "content": p["content"],
+                "character_count": p["character_count"],
+            }
+        )
+
+    # 10. Link to project if requested
+    if project_id is not None:
+        db.execute(
+            text("""
+                INSERT INTO project_papers (project_id, paper_id)
+                VALUES (:pid, :paper_id)
+                ON CONFLICT (project_id, paper_id) DO NOTHING;
+            """),
+            {"pid": project_id, "paper_id": paper_id}
+        )
+
+    # 11. Audit event
+    db.execute(
+        text("""
+            INSERT INTO audit_events (user_id, project_id, action, details)
+            VALUES (:uid, :pid, 'paper_uploaded', CAST(:details AS JSONB));
+        """),
+        {
+            "uid": current_user["id"],
+            "pid": project_id,
+            "details": json.dumps({
+                "paper_id": paper_id,
+                "checksum": checksum,
+                "page_count": extracted["page_count"],
+                "status": extracted["status"]
+            })
+        }
+    )
+
+    db.commit()
+
+    paper_dict = dict(paper_row)
+    paper_dict["version_id"] = version_row["id"]
+    paper_dict["file_path"] = version_row["file_path"]
+    paper_dict["file_checksum"] = version_row["file_checksum"]
+    paper_dict["file_size_bytes"] = version_row["file_size_bytes"]
+    paper_dict["page_count"] = version_row["page_count"]
+    paper_dict["extraction_status"] = version_row["extraction_status"]
+    paper_dict["error_message"] = version_row["error_message"]
+    paper_dict["version_created_at"] = version_row["created_at"]
+
+    return {
+        "paper": _row_to_paper_response(paper_dict),
+        "version": dict(version_row),
+        "pages_extracted": len(extracted["pages"]),
+        "is_duplicate": False,
+        "message": f"Extraction successful • {extracted['page_count']} pages extracted."
+    }
 
 
 @router.get("", response_model=List[PaperResponse])
@@ -78,46 +417,64 @@ def list_library_papers(
     db: Session = Depends(get_db)
 ):
     """
-    Lists papers in the canonical master library.
-    Enforces access boundaries:
-    - Primary Owner/Admin: Sees all papers in the master library.
-    - Collaborator (Editor/Viewer): Only sees papers curated into projects they belong to.
+    Lists papers in the canonical master library with their latest version.
+    Enforces access boundaries.
     """
     params: dict = {}
 
     if current_user.get("role") == "owner":
         query_str = """
-            SELECT id, title, normalized_title, doi, authors, year,
-                   venue, abstract, source_url, access_status,
-                   created_at, updated_at
-            FROM papers
+            SELECT p.id, p.title, p.normalized_title, p.doi, p.authors, p.year,
+                   p.venue, p.abstract, p.source_url, p.access_status,
+                   p.created_at, p.updated_at,
+                   v.id AS version_id, v.file_path, v.file_checksum, v.file_size_bytes,
+                   v.page_count, v.extraction_status, v.error_message, v.created_at AS version_created_at
+            FROM papers p
+            LEFT JOIN LATERAL (
+                SELECT id, file_path, file_checksum, file_size_bytes, page_count,
+                       extraction_status, error_message, created_at
+                FROM paper_versions
+                WHERE paper_id = p.id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) v ON true
             WHERE 1=1
         """
     else:
-        # Collaborator only sees papers belonging to their permitted projects
         query_str = """
             SELECT DISTINCT p.id, p.title, p.normalized_title, p.doi, p.authors, p.year,
                             p.venue, p.abstract, p.source_url, p.access_status,
-                            p.created_at, p.updated_at
+                            p.created_at, p.updated_at,
+                            v.id AS version_id, v.file_path, v.file_checksum, v.file_size_bytes,
+                            v.page_count, v.extraction_status, v.error_message, v.created_at AS version_created_at
             FROM papers p
-            JOIN project_papers pp ON p.id = pp.paper_id
-            JOIN project_members pm ON pp.project_id = pm.project_id
-            WHERE pm.user_id = :user_id
+            LEFT JOIN project_papers pp ON p.id = pp.paper_id
+            LEFT JOIN project_members pm ON pp.project_id = pm.project_id AND pm.user_id = :user_id
+            LEFT JOIN audit_events ae ON ae.action = 'paper_uploaded' AND (ae.details->>'paper_id')::int = p.id AND ae.user_id = :user_id
+            LEFT JOIN LATERAL (
+                SELECT id, file_path, file_checksum, file_size_bytes, page_count,
+                       extraction_status, error_message, created_at
+                FROM paper_versions
+                WHERE paper_id = p.id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) v ON true
+            WHERE pm.user_id = :user_id OR ae.user_id = :user_id
         """
         params["user_id"] = current_user["id"]
 
     if search:
-        query_str += " AND (title ILIKE :search OR abstract ILIKE :search)"
+        query_str += " AND (p.title ILIKE :search OR p.abstract ILIKE :search)"
         params["search"] = f"%{search}%"
 
     if year:
-        query_str += " AND year = :year"
+        query_str += " AND p.year = :year"
         params["year"] = year
 
-    query_str += " ORDER BY year DESC NULLS LAST, created_at DESC;"
+    query_str += " ORDER BY p.year DESC NULLS LAST, p.created_at DESC;"
 
-    result = db.execute(text(query_str), params)
-    return result.mappings().fetchall()
+    rows = db.execute(text(query_str), params).mappings().fetchall()
+    return [_row_to_paper_response(dict(r)) for r in rows]
 
 
 @router.get("/{paper_id}", response_model=PaperResponse)
@@ -126,31 +483,25 @@ def get_paper(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Retrieves a single canonical paper by its ID, checking permissions."""
-    if current_user.get("role") != "owner":
-        # Check if user has permission to see this paper via any of their projects
-        check_access = db.execute(
-            text("""
-                SELECT 1
-                FROM project_papers pp
-                JOIN project_members pm ON pp.project_id = pm.project_id
-                WHERE pp.paper_id = :paper_id AND pm.user_id = :user_id;
-            """),
-            {"paper_id": paper_id, "user_id": current_user["id"]}
-        ).fetchone()
-
-        if not check_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied. You do not have permission to view this paper."
-            )
+    """Retrieves a single canonical paper by its ID, including latest version info."""
+    check_paper_access(paper_id, current_user, db)
 
     sql = text("""
-        SELECT id, title, normalized_title, doi, authors, year,
-               venue, abstract, source_url, access_status,
-               created_at, updated_at
-        FROM papers
-        WHERE id = :paper_id;
+        SELECT p.id, p.title, p.normalized_title, p.doi, p.authors, p.year,
+               p.venue, p.abstract, p.source_url, p.access_status,
+               p.created_at, p.updated_at,
+               v.id AS version_id, v.file_path, v.file_checksum, v.file_size_bytes,
+               v.page_count, v.extraction_status, v.error_message, v.created_at AS version_created_at
+        FROM papers p
+        LEFT JOIN LATERAL (
+            SELECT id, file_path, file_checksum, file_size_bytes, page_count,
+                   extraction_status, error_message, created_at
+            FROM paper_versions
+            WHERE paper_id = p.id
+            ORDER BY created_at DESC
+            LIMIT 1
+        ) v ON true
+        WHERE p.id = :paper_id;
     """)
     row = db.execute(sql, {"paper_id": paper_id}).mappings().fetchone()
     if not row:
@@ -158,4 +509,224 @@ def get_paper(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Paper with ID {paper_id} not found."
         )
-    return row
+    return _row_to_paper_response(dict(row))
+
+
+@router.get("/{paper_id}/versions", response_model=List[PaperVersionResponse])
+def get_paper_versions(
+    paper_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lists all versions associated with a paper."""
+    check_paper_access(paper_id, current_user, db)
+    rows = db.execute(
+        text("""
+            SELECT id, paper_id, file_path, file_checksum, file_size_bytes,
+                   page_count, extraction_status, error_message, created_at
+            FROM paper_versions
+            WHERE paper_id = :paper_id
+            ORDER BY created_at DESC;
+        """),
+        {"paper_id": paper_id}
+    ).mappings().fetchall()
+    return rows
+
+
+@router.get("/{paper_id}/pages", response_model=List[PaperPageResponse])
+def get_paper_pages(
+    paper_id: int,
+    version_id: Optional[int] = Query(None, description="Optional specific version ID; defaults to latest"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Retrieves extracted pages for the paper reader interface."""
+    check_paper_access(paper_id, current_user, db)
+
+    # Determine version
+    if version_id is None:
+        target_version = db.execute(
+            text("SELECT id FROM paper_versions WHERE paper_id = :pid ORDER BY created_at DESC LIMIT 1;"),
+            {"pid": paper_id}
+        ).mappings().fetchone()
+        if not target_version:
+            return []
+        version_id = target_version["id"]
+
+    pages = db.execute(
+        text("""
+            SELECT id, paper_version_id, page_number, content, character_count, created_at
+            FROM paper_pages
+            WHERE paper_version_id = :vid
+            ORDER BY page_number ASC;
+        """),
+        {"vid": version_id}
+    ).mappings().fetchall()
+    return pages
+
+
+@router.get("/{paper_id}/pdf")
+def download_paper_pdf(
+    paper_id: int,
+    version_id: Optional[int] = Query(None, description="Optional specific version ID; defaults to latest"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Streams the raw PDF file for authorized users."""
+    check_paper_access(paper_id, current_user, db)
+
+    paper = db.execute(
+        text("SELECT title FROM papers WHERE id = :id;"),
+        {"id": paper_id}
+    ).mappings().fetchone()
+
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found.")
+
+    if version_id is None:
+        ver = db.execute(
+            text("SELECT file_path FROM paper_versions WHERE paper_id = :pid ORDER BY created_at DESC LIMIT 1;"),
+            {"pid": paper_id}
+        ).mappings().fetchone()
+    else:
+        ver = db.execute(
+            text("SELECT file_path FROM paper_versions WHERE id = :vid AND paper_id = :pid;"),
+            {"vid": version_id, "pid": paper_id}
+        ).mappings().fetchone()
+
+    if not ver or not os.path.exists(ver["file_path"]):
+        raise HTTPException(status_code=404, detail="PDF file not found on disk.")
+
+    safe_title = "".join(c for c in paper["title"] if c.isalnum() or c in (" ", "-", "_")).strip()[:50]
+    return FileResponse(
+        ver["file_path"],
+        media_type="application/pdf",
+        filename=f"{safe_title or 'paper'}.pdf"
+    )
+
+
+@router.post("/{paper_id}/retry", response_model=PaperVersionResponse)
+def retry_paper_extraction(
+    paper_id: int,
+    version_id: Optional[int] = Query(None, description="Optional version ID; defaults to latest"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retries text extraction on an existing stored PDF.
+    Useful if a worker previously failed or an updated extraction heuristic is deployed.
+    """
+    check_paper_access(paper_id, current_user, db)
+
+    if version_id is None:
+        ver = db.execute(
+            text("SELECT * FROM paper_versions WHERE paper_id = :pid ORDER BY created_at DESC LIMIT 1;"),
+            {"pid": paper_id}
+        ).mappings().fetchone()
+    else:
+        ver = db.execute(
+            text("SELECT * FROM paper_versions WHERE id = :vid AND paper_id = :pid;"),
+            {"vid": version_id, "pid": paper_id}
+        ).mappings().fetchone()
+
+    if not ver or not os.path.exists(ver["file_path"]):
+        raise HTTPException(status_code=404, detail="PDF file not found on disk.")
+
+    # Re-extract
+    with open(ver["file_path"], "rb") as f:
+        file_bytes = f.read()
+
+    extracted = extract_pdf_data(file_bytes)
+
+    # Delete existing pages for this version and re-insert
+    db.execute(text("DELETE FROM paper_pages WHERE paper_version_id = :vid;"), {"vid": ver["id"]})
+
+    for p in extracted["pages"]:
+        db.execute(
+            text("""
+                INSERT INTO paper_pages (paper_version_id, page_number, content, character_count)
+                VALUES (:version_id, :page_number, :content, :character_count);
+            """),
+            {
+                "version_id": ver["id"],
+                "page_number": p["page_number"],
+                "content": p["content"],
+                "character_count": p["character_count"],
+            }
+        )
+
+    # Update version status
+    updated_ver = db.execute(
+        text("""
+            UPDATE paper_versions
+            SET page_count = :page_count,
+                extraction_status = :status,
+                error_message = :error_message
+            WHERE id = :id
+            RETURNING *;
+        """),
+        {
+            "id": ver["id"],
+            "page_count": extracted["page_count"],
+            "status": extracted["status"],
+            "error_message": extracted["error_message"],
+        }
+    ).mappings().fetchone()
+
+    # Update canonical paper title, authors, and year if improved by re-extraction
+    meta = extracted.get("metadata", {})
+    paper_updates = {}
+    if meta.get("title"):
+        paper_updates["title"] = meta["title"]
+        paper_updates["normalized_title"] = " ".join(meta["title"].lower().split())
+    if meta.get("author"):
+        paper_updates["authors"] = meta["author"]
+    if meta.get("year"):
+        paper_updates["year"] = meta["year"]
+
+    if paper_updates:
+        set_clauses = [f"{k} = :{k}" for k in paper_updates.keys()]
+        paper_updates["pid"] = paper_id
+        db.execute(
+            text(f"UPDATE papers SET {', '.join(set_clauses)}, updated_at = CURRENT_TIMESTAMP WHERE id = :pid;"),
+            paper_updates
+        )
+
+    db.commit()
+    return updated_ver
+
+
+@router.patch("/{paper_id}", response_model=PaperResponse)
+def update_paper_metadata(
+    paper_id: int,
+    payload: PaperUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Updates metadata (title, authors, year) for an existing paper."""
+    check_paper_access(paper_id, current_user, db)
+
+    updates = {}
+    if payload.title is not None and payload.title.strip():
+        updates["title"] = payload.title.strip()
+        updates["normalized_title"] = " ".join(payload.title.strip().lower().split())
+    if payload.authors is not None:
+        updates["authors"] = payload.authors.strip() if payload.authors.strip() else None
+    if payload.year is not None:
+        updates["year"] = payload.year
+    if payload.venue is not None:
+        updates["venue"] = payload.venue.strip() if payload.venue.strip() else None
+    if payload.abstract is not None:
+        updates["abstract"] = payload.abstract.strip() if payload.abstract.strip() else None
+
+    if updates:
+        set_clauses = [f"{k} = :{k}" for k in updates.keys()]
+        updates["pid"] = paper_id
+        db.execute(
+            text(f"UPDATE papers SET {', '.join(set_clauses)}, updated_at = CURRENT_TIMESTAMP WHERE id = :pid;"),
+            updates
+        )
+        db.commit()
+
+    return get_paper(paper_id, current_user, db)
+
