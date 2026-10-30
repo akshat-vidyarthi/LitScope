@@ -1,15 +1,26 @@
 import React from 'react';
-import { BookOpen, FolderGit2, Database } from 'lucide-react';
+import { BookOpen, FolderGit2, Database, LogOut, LogIn } from 'lucide-react';
+import { User } from '../api/client';
 
 interface NavbarProps {
   activeTab: 'projects' | 'library';
   setActiveTab: (tab: 'projects' | 'library') => void;
   dbStatus: 'connected' | 'disconnected' | 'checking';
+  currentUser: User | null;
+  onOpenAuth: () => void;
+  onLogout: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, dbStatus }) => {
+export const Navbar: React.FC<NavbarProps> = ({
+  activeTab,
+  setActiveTab,
+  dbStatus,
+  currentUser,
+  onOpenAuth,
+  onLogout,
+}) => {
   return (
-    <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
           {/* Logo and Brand */}
@@ -20,7 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, dbStatu
             <div>
               <span className="font-bold text-lg text-slate-900 tracking-tight">LitScope</span>
               <span className="ml-2 text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
-                Phase 1 Baseline
+                Phase 2 Private
               </span>
             </div>
           </div>
@@ -51,24 +62,60 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, dbStatu
             </button>
           </nav>
 
-          {/* Database Health Badge */}
-          <div className="flex items-center space-x-2">
-            <div
-              className={`w-2.5 h-2.5 rounded-full ${
-                dbStatus === 'connected'
-                  ? 'bg-emerald-500 ring-4 ring-emerald-100 animate-pulse'
-                  : dbStatus === 'checking'
-                  ? 'bg-amber-400'
-                  : 'bg-rose-500 ring-4 ring-rose-100'
-              }`}
-            />
-            <span className="text-xs text-slate-500 font-medium">
-              {dbStatus === 'connected'
-                ? 'PostgreSQL Connected'
-                : dbStatus === 'checking'
-                ? 'Connecting...'
-                : 'Database Offline'}
-            </span>
+          {/* Right Section: DB Health + User Profile */}
+          <div className="flex items-center space-x-4">
+            {/* Database Health Badge */}
+            <div className="flex items-center space-x-1.5 hidden md:flex">
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  dbStatus === 'connected'
+                    ? 'bg-emerald-500'
+                    : dbStatus === 'checking'
+                    ? 'bg-amber-400'
+                    : 'bg-rose-500'
+                }`}
+              />
+              <span className="text-xs text-slate-400 font-medium">
+                {dbStatus === 'connected' ? 'PostgreSQL' : 'Offline'}
+              </span>
+            </div>
+
+            {/* User Account / Auth Actions */}
+            {currentUser ? (
+              <div className="flex items-center space-x-3 pl-2 border-l border-slate-200">
+                <div className="flex items-center space-x-2">
+                  <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs">
+                    {currentUser.full_name
+                      ? currentUser.full_name[0].toUpperCase()
+                      : currentUser.email[0].toUpperCase()}
+                  </div>
+                  <div className="hidden sm:block text-left">
+                    <p className="text-xs font-semibold text-slate-800 leading-tight">
+                      {currentUser.full_name || currentUser.email.split('@')[0]}
+                    </p>
+                    <span className="text-[10px] uppercase font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-100">
+                      {currentUser.role}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={onLogout}
+                  title="Sign Out"
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={onOpenAuth}
+                className="inline-flex items-center px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition"
+              >
+                <LogIn className="w-3.5 h-3.5 mr-1.5" />
+                Sign In
+              </button>
+            )}
           </div>
         </div>
       </div>

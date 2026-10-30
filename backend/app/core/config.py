@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -10,6 +9,11 @@ class Settings(BaseSettings):
 
     # Database configuration
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/litscope_dev"
+
+    # Security & Authentication
+    JWT_SECRET_KEY: str = "litscope-dev-jwt-secret-key-for-local-development-only-min32bytes"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 
     # Storage configuration
     LOCAL_STORAGE_PATH: str = "./data/storage"

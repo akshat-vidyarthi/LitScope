@@ -1,3 +1,12 @@
+export interface User {
+  id: number;
+  email: string;
+  full_name?: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -6,6 +15,17 @@ export interface Project {
   scope?: string;
   inclusion_criteria?: string;
   exclusion_criteria?: string;
+  owner_id?: number;
+  created_at: string;
+}
+
+export interface ProjectMember {
+  membership_id: number;
+  project_id: number;
+  user_id: number;
+  email: string;
+  full_name?: string;
+  role: string;
   created_at: string;
 }
 
@@ -36,7 +56,64 @@ export interface CuratedPaper {
 
 const API_BASE = '/api/v1';
 
+const getAuthHeaders = (): HeadersInit => {
+  const token = localStorage.getItem('litscope_token');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
 export const api = {
+  // Auth
+  register: async (email: string, password: string, fullName?: string): Promise<User> => {
+    const res = await fetch(`${API_BASE}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, full_name: fullName }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Registration failed');
+    }
+    return res.json();
+  },
+
+  login: async (email: string, password: string): Promise<{ access_token: string; user: User }> => {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Invalid email or password');
+    }
+    const data = await res.json();
+    localStorage.setItem('litscope_token', data.access_token);
+    return data;
+  },
+
+  getCurrentUser: async (): Promise<User | null> => {
+    const token = localStorage.getItem('litscope_token');
+    if (!token) return null;
+    const res = await fetch(`${API_BASE}/auth/me`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      localStorage.removeItem('litscope_token');
+      return null;
+    }
+    return res.json();
+  },
+
+  logout: () => {
+    localStorage.removeItem('litscope_token');
+  },
+
   // Health
   checkHealth: async () => {
     const res = await fetch(`${API_BASE}/health`);
@@ -45,13 +122,17 @@ export const api = {
 
   // Projects
   getProjects: async (): Promise<Project[]> => {
-    const res = await fetch(`${API_BASE}/projects`);
+    const res = await fetch(`${API_BASE}/projects`, {
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) throw new Error('Failed to fetch projects');
     return res.json();
   },
 
   getProject: async (id: number): Promise<Project> => {
-    const res = await fetch(`${API_BASE}/projects/${id}`);
+    const res = await fetch(`${API_BASE}/projects/${id}`, {
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) throw new Error('Failed to fetch project');
     return res.json();
   },
@@ -59,16 +140,48 @@ export const api = {
   createProject: async (data: Partial<Project>): Promise<Project> => {
     const res = await fetch(`${API_BASE}/projects`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
     if (!res.ok) throw new Error('Failed to create project');
     return res.json();
   },
 
+  // Project Members & Collaborator Invitations
+  getProjectMembers: async (projectId: number): Promise<ProjectMember[]> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/members`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch members');
+    return res.json();
+  },
+
+  addProjectMember: async (projectId: number, email: string, role: string): Promise<ProjectMember> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/members`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ email, role }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to add member');
+    }
+    return res.json();
+  },
+
+  removeProjectMember: async (projectId: number, userId: number): Promise<void> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/members/${userId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to remove member');
+  },
+
   // Project Curation
   getCuratedPapers: async (projectId: number): Promise<CuratedPaper[]> => {
-    const res = await fetch(`${API_BASE}/projects/${projectId}/papers`);
+    const res = await fetch(`${API_BASE}/projects/${projectId}/papers`, {
+      headers: getAuthHeaders(),
+    });
     if (!res.ok) throw new Error('Failed to fetch curated papers');
     return res.json();
   },
@@ -81,14 +194,17 @@ export const api = {
   ): Promise<any> => {
     const res = await fetch(`${API_BASE}/projects/${projectId}/papers`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({
         paper_id: paperId,
         inclusion_status: status,
         notes: notes || '',
       }),
     });
-    if (!res.ok) throw new Error('Failed to curate paper');
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to curate paper');
+    }
     return res.json();
   },
 
@@ -105,7 +221,7 @@ export const api = {
   createPaper: async (data: Partial<Paper>): Promise<Paper> => {
     const res = await fetch(`${API_BASE}/papers`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
     if (!res.ok) {

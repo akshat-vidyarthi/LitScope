@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, BookOpen, BookmarkCheck, Calendar, User } from 'lucide-react';
-import { api, Paper, Project } from '../api/client';
+import { Search, Plus, BookOpen, BookmarkCheck, Calendar, User as UserIcon, Shield } from 'lucide-react';
+import { api, Paper, Project, User } from '../api/client';
 
-export const LibraryView: React.FC = () => {
+interface LibraryViewProps {
+  currentUser: User | null;
+  onOpenAuth: () => void;
+}
+
+export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAuth }) => {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,6 +31,12 @@ export const LibraryView: React.FC = () => {
   const [curationNotes, setCurationNotes] = useState('');
 
   const loadData = async () => {
+    if (!currentUser) {
+      setPapers([]);
+      setProjects([]);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const [papersData, projectsData] = await Promise.all([
@@ -45,11 +56,15 @@ export const LibraryView: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!currentUser) {
+      setLoading(false);
+      return;
+    }
     const delayDebounce = setTimeout(() => {
       loadData();
     }, 250);
     return () => clearTimeout(delayDebounce);
-  }, [searchTerm]);
+  }, [searchTerm, currentUser]);
 
   const handleAddPaper = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,10 +106,30 @@ export const LibraryView: React.FC = () => {
       );
       setCuratingPaper(null);
       setCurationNotes('');
-    } catch (err) {
-      alert('Failed to curate paper');
+    } catch (err: any) {
+      alert(err.message || 'Failed to curate paper');
     }
   };
+
+  if (!currentUser) {
+    return (
+      <div className="max-w-md mx-auto my-20 p-8 bg-white border border-slate-200 rounded-2xl shadow-sm text-center space-y-4">
+        <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+          <Shield className="w-6 h-6" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">Private Master Library</h2>
+        <p className="text-sm text-slate-500">
+          The master research library is private-by-default. Sign in to view and curate papers.
+        </p>
+        <button
+          onClick={onOpenAuth}
+          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shadow-sm transition"
+        >
+          Sign In / Create Account
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -103,7 +138,7 @@ export const LibraryView: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Master Research Library</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Canonical, deduplicated repository of all research papers across projects.
+            Canonical, deduplicated repository of research papers.
           </p>
         </div>
         <button
@@ -159,7 +194,7 @@ export const LibraryView: React.FC = () => {
                   <div className="flex items-center space-x-4 text-xs text-slate-500 pt-1">
                     {paper.authors && (
                       <span className="flex items-center">
-                        <User className="w-3.5 h-3.5 mr-1 text-slate-400" />
+                        <UserIcon className="w-3.5 h-3.5 mr-1 text-slate-400" />
                         {paper.authors}
                       </span>
                     )}

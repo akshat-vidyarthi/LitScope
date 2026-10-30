@@ -1,13 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, ArrowRight } from 'lucide-react';
-import { api, Project, CuratedPaper } from '../api/client';
+import { Plus, Folder, ArrowRight, Users, Trash2, Shield, UserPlus } from 'lucide-react';
+import { api, Project, CuratedPaper, ProjectMember, User } from '../api/client';
 
-export const ProjectsView: React.FC = () => {
+interface ProjectsViewProps {
+  currentUser: User | null;
+  onOpenAuth: () => void;
+}
+
+export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenAuth }) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [curatedPapers, setCuratedPapers] = useState<CuratedPaper[]>([]);
+  const [members, setMembers] = useState<ProjectMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showMembersModal, setShowMembersModal] = useState(false);
+
+  // Invite Form
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState('viewer');
 
   // Form State
   const [formData, setFormData] = useState({
@@ -20,12 +31,20 @@ export const ProjectsView: React.FC = () => {
   });
 
   const loadProjects = async () => {
+    if (!currentUser) {
+      setProjects([]);
+      setSelectedProject(null);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const data = await api.getProjects();
       setProjects(data);
-      if (data.length > 0 && !selectedProject) {
-        setSelectedProject(data[0]);
+      if (data.length > 0) {
+        setSelectedProject((prev) => (prev ? data.find((p) => p.id === prev.id) || data[0] : data[0]));
+      } else {
+        setSelectedProject(null);
       }
     } catch (err) {
       console.error(err);
@@ -34,10 +53,14 @@ export const ProjectsView: React.FC = () => {
     }
   };
 
-  const loadCuratedPapers = async (projectId: number) => {
+  const loadProjectDetails = async (projectId: number) => {
     try {
-      const papers = await api.getCuratedPapers(projectId);
+      const [papers, membersList] = await Promise.all([
+        api.getCuratedPapers(projectId),
+        api.getProjectMembers(projectId),
+      ]);
       setCuratedPapers(papers);
+      setMembers(membersList);
     } catch (err) {
       console.error(err);
     }
@@ -45,11 +68,11 @@ export const ProjectsView: React.FC = () => {
 
   useEffect(() => {
     loadProjects();
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     if (selectedProject) {
-      loadCuratedPapers(selectedProject.id);
+      loadProjectDetails(selectedProject.id);
     }
   }, [selectedProject]);
 
@@ -69,10 +92,55 @@ export const ProjectsView: React.FC = () => {
         inclusion_criteria: '',
         exclusion_criteria: '',
       });
-    } catch (err) {
-      alert('Failed to create project');
+    } catch (err: any) {
+      alert(err.message || 'Failed to create project');
     }
   };
+
+  const handleInviteMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProject || !inviteEmail.trim()) return;
+    try {
+      const added = await api.addProjectMember(selectedProject.id, inviteEmail, inviteRole);
+      setMembers([...members, added]);
+      setInviteEmail('');
+      alert(`Invited ${inviteEmail} as ${inviteRole}!`);
+    } catch (err: any) {
+      alert(err.message || 'Failed to invite collaborator');
+    }
+  };
+
+  const handleRemoveMember = async (userId: number) => {
+    if (!selectedProject || !confirm('Are you sure you want to remove this collaborator?')) return;
+    try {
+      await api.removeProjectMember(selectedProject.id, userId);
+      setMembers(members.filter((m) => m.user_id !== userId));
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove member');
+    }
+  };
+
+  if (!currentUser) {
+    return (
+      <div className="max-w-md mx-auto my-20 p-8 bg-white border border-slate-200 rounded-2xl shadow-sm text-center space-y-4">
+        <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+          <Shield className="w-6 h-6" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">Private Research Workspace</h2>
+        <p className="text-sm text-slate-500">
+          LitScope enforces private-by-default access. Sign in to view and curate your research projects.
+        </p>
+        <button
+          onClick={onOpenAuth}
+          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shadow-sm transition"
+        >
+          Sign In / Create Account
+        </button>
+      </div>
+    );
+  }
+
+  const isOwner = selectedProject?.owner_id === currentUser.id || currentUser.role === 'owner';
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -81,7 +149,7 @@ export const ProjectsView: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Research Projects</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Curated collections with project-specific research questions and scope boundaries.
+            Curated collections with project-specific research questions and role-based collaboration.
           </p>
         </div>
         <button
@@ -148,15 +216,24 @@ export const ProjectsView: React.FC = () => {
             ))}
           </div>
 
-          {/* Selected Project Details and Curated Papers */}
+          {/* Selected Project Details */}
           <div className="lg:col-span-2">
             {selectedProject && (
               <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6">
-                {/* Project Header */}
+                {/* Project Header with Collaborators Action */}
                 <div className="border-b border-slate-100 pb-5">
                   <div className="flex justify-between items-baseline">
                     <h2 className="text-xl font-bold text-slate-900">{selectedProject.name}</h2>
-                    <span className="text-xs text-slate-400">ID: #{selectedProject.id}</span>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => setShowMembersModal(true)}
+                        className="inline-flex items-center px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition"
+                      >
+                        <Users className="w-3.5 h-3.5 mr-1.5" />
+                        Collaborators ({members.length})
+                      </button>
+                      <span className="text-xs text-slate-400 font-mono">#{selectedProject.id}</span>
+                    </div>
                   </div>
                   {selectedProject.description && (
                     <p className="text-sm text-slate-600 mt-1">{selectedProject.description}</p>
@@ -260,6 +337,96 @@ export const ProjectsView: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Collaborators Modal */}
+      {showMembersModal && selectedProject && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-5">
+            <div className="flex justify-between items-baseline border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-bold text-slate-900">Project Collaborators</h3>
+              <button
+                onClick={() => setShowMembersModal(false)}
+                className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Invite New Collaborator Form (Owners Only) */}
+            {isOwner && (
+              <form onSubmit={handleInviteMember} className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
+                <h4 className="text-xs font-bold uppercase text-slate-600 tracking-wider flex items-center">
+                  <UserPlus className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
+                  Invite Collaborator
+                </h4>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    required
+                    placeholder="colleague@university.edu"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                  />
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value)}
+                    className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none"
+                  >
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                  <button
+                    type="submit"
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition"
+                  >
+                    Invite
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Current Members List */}
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {members.map((m) => (
+                <div
+                  key={m.membership_id}
+                  className="flex justify-between items-center p-3 rounded-lg border border-slate-100 hover:bg-slate-50 transition"
+                >
+                  <div>
+                    <p className="text-xs font-semibold text-slate-900">
+                      {m.full_name || m.email}
+                    </p>
+                    <p className="text-[11px] text-slate-500">{m.email}</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span
+                      className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                        m.role === 'owner'
+                          ? 'bg-purple-50 text-purple-700 border-purple-200'
+                          : m.role === 'editor'
+                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                          : 'bg-slate-100 text-slate-600 border-slate-200'
+                      }`}
+                    >
+                      {m.role}
+                    </span>
+                    {isOwner && m.role !== 'owner' && (
+                      <button
+                        onClick={() => handleRemoveMember(m.user_id)}
+                        className="text-slate-400 hover:text-rose-600 transition p-1"
+                        title="Remove member"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

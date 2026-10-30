@@ -1,6 +1,6 @@
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 
 
 class ProjectCreate(BaseModel):
@@ -36,3 +36,18 @@ class CuratedPaperResponse(BaseModel):
     inclusion_status: str
     notes: Optional[str] = None
     date_added: datetime
+
+
+class ProjectMemberAdd(BaseModel):
+    email: EmailStr = Field(..., description="Email of the user to invite/add")
+    role: str = Field("viewer", description="Role to assign: editor or viewer")
+
+
+class ProjectMemberResponse(BaseModel):
+    membership_id: int
+    project_id: int
+    user_id: int
+    email: str
+    full_name: Optional[str] = None
+    role: str
+    created_at: datetime
