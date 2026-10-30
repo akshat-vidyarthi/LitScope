@@ -9,24 +9,62 @@
 
 LitScope transitions academic literature exploration from temporary "chat with a PDF" sessions into an auditable, long-term research tool.
 
-* **Canonical Master Library:** Papers are stored once in a persistent, deduplicated master library using DOI and metadata matching. 
-* **Project Separability:** Papers can be curated into separate research projects without duplicating PDFs or re-extracting text. Each project maintains its own research question, scope boundaries, inclusion/exclusion criteria, and analysis history.
-* **Conventional RAG Architecture:** Deterministic retrieval (hybrid keyword + semantic search) with inspectable, page-level citations.
+* **Canonical Master Library:** Papers are stored once in a persistent, deduplicated master library using DOI and normalized title matching. Upload once, curate across multiple studies without duplicating files or re-extracting text.
+* **Project Workspaces & Scoping:** Papers can be curated into separate research projects. Each project maintains its own research question, scope boundaries, inclusion/exclusion criteria, collaborator permissions, and analysis history.
+* **Granular Role-Based Access:** Projects support collaborative workflows with `OWNER`, `EDITOR`, and `VIEWER` roles, complete with member invitation management and dynamic role switching.
+* **In-App PDF Reader:** High-fidelity document reader with page navigation, zoom controls, and thumbnail/text inspection.
+* **Deterministic RAG & Evidence Grounding:** Hybrid retrieval (dense vector similarity + PostgreSQL full-text keyword search) coupled with academic synthesis that strictly enforces page-level citations (`[Paper Title, p. X]`).
+* **Interactive Citations:** Clicking citation pills in Q&A responses navigates the reader directly to the cited page.
 
 ---
 
-## 2. Technical Stack
+## 2. System Architecture
 
-* **Backend:** Python + FastAPI (Asynchronous REST API)
-* **Database:** PostgreSQL (SQL-First schema & migrations via dedicated runner)
-* **Frontend:** React + TypeScript (Vite + Tailwind CSS)
-* **Data Layer:** SQLAlchemy Core with parameterized SQL queries
-* **PDF Processing:** PyMuPDF (`fitz`) *(upcoming)*
-* **Local Inference:** Ollama *(quantized 3B–7B models)* + SentenceTransformers *(local embeddings)*
+```text
+[Academic PDFs] ───────► [Master Library (Canonical Deduplication)]
+                                   │
+                                   ▼
+                        [Project Curated Studies]
+                      (OWNER / EDITOR / VIEWER Roles)
+                                   │
+            ┌──────────────────────┴──────────────────────┐
+            ▼                                             ▼
+   [PyMuPDF Text Engine]                        [Interactive In-App Reader]
+            │                                             ▲
+            ▼                                             │ (Click Citation Pill)
+[Sentence-Aware Chunker]                                  │
+ (Page-Tracked Boundaries)                                │
+            │                                             │
+            ▼                                             │
+ [FastEmbed Vector Model]                                 │
+  (BAAI/bge-small-en-v1.5)                                │
+            │                                             │
+            ▼                                             │
+[PostgreSQL Hybrid Index]                                 │
+(Vector Cosine + tsvector Full-Text)                      │
+            │                                             │
+            ▼                                             │
+ [Evidence Retrieval Engine]                              │
+            │                                             │
+            ▼                                             │
+[Grounded Academic Synthesis] ────────────────────────────┘
+  (Strict [Title, p. X] Citations)
+```
 
 ---
 
-## 3. Local Setup & Running
+## 3. Technical Stack
+
+* **Backend:** Python 3.12+, FastAPI (Asynchronous REST API)
+* **Database & Search:** PostgreSQL 16/17 with SQL-first migrations, `vector` (cosine distance), and `tsvector` (full-text search)
+* **Embeddings & Extraction:** FastEmbed (`BAAI/bge-small-en-v1.5`), PyMuPDF (`fitz`), NumPy
+* **Data Access & Security:** SQLAlchemy Core, PyJWT, Bcrypt password hashing
+* **Synthesis & LLM Connectors:** Ollama (local inference), with fallback connectors for Gemini, Groq, or OpenAI
+* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons
+
+---
+
+## 4. Local Setup & Running
 
 ### Prerequisites
 * **Python 3.12+**
@@ -40,9 +78,10 @@ LitScope transitions academic literature exploration from temporary "chat with a
    ```cmd
    createdb -U postgres litscope_dev
    ```
-2. In `backend/`, copy `.env.example` to `.env` and set your PostgreSQL password:
+2. In `backend/`, copy `.env.example` to `.env` and set your PostgreSQL credentials:
    ```text
    DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/litscope_dev
+   JWT_SECRET_KEY=your-secure-random-secret-key-at-least-32-characters
    ```
 3. Run the SQL schema migrations:
    ```cmd
@@ -77,19 +116,27 @@ npm run dev
 ---
 
 ### Running Automated Tests
-From the `backend/` directory:
-```cmd
-pytest -v
-```
+
+* **Backend Unit & API Tests:**
+  ```cmd
+  cd backend
+  .venv\Scripts\pytest.exe -v
+  ```
+
+* **Frontend Build Check:**
+  ```cmd
+  cd frontend
+  npm run build
+  ```
 
 ---
 
-## 4. Development Roadmap
+## 5. Development Roadmap
 
 - [x] **Phase 1:** Project Skeleton, PostgreSQL Persistence, and REST API Baseline
-- [ ] **Phase 2:** Authentication, Roles & Project Curation
-- [ ] **Phase 3:** PDF Ingestion, Text Extraction & Master Library
-- [ ] **Phase 4:** Local Embeddings & Conventional RAG Question Answering
+- [x] **Phase 2:** Authentication, User Roles & Project Curation Workspaces
+- [x] **Phase 3:** PDF Ingestion, Text Extraction & Master Library Reader
+- [x] **Phase 4:** Sentence-Aware Chunking, Hybrid Vector Retrieval & Grounded Q&A Synthesis
 - [ ] **Phase 5:** Scholarly Discovery Connectors (OpenAlex & Crossref)
 - [ ] **Phase 6:** Structured Evidence Extraction & Cross-Paper Comparison Matrix
 - [ ] **Phase 7:** Evidence-Based Candidate Research-Gap Analysis
@@ -99,5 +146,6 @@ pytest -v
 
 ---
 
-## License & Author
+## 6. License & Author
 * **Author:** [akshat-vidyarthi](https://github.com/akshat-vidyarthi)
+* **License:** MIT
