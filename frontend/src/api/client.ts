@@ -131,6 +131,46 @@ export interface DiscoveryImportResponse {
   message: string;
 }
 
+export interface MatrixEvidenceRow {
+  id?: number;
+  project_id: number;
+  paper_id: number;
+  title: string;
+  doi?: string;
+  year?: number;
+  authors?: string;
+  venue?: string;
+  access_status: string;
+  has_pdf: boolean;
+  objective?: string;
+  methodology?: string;
+  datasets?: string;
+  findings?: string;
+  limitations?: string;
+  provenance: Record<string, { page?: number; quote?: string }>;
+  is_custom_edited: boolean;
+  status: 'pending' | 'extracting' | 'completed' | 'failed';
+  error_message?: string;
+  updated_at?: string;
+}
+
+export interface ProjectMatrixResponse {
+  project_id: number;
+  project_name: string;
+  total_papers: number;
+  extracted_papers: number;
+  rows: MatrixEvidenceRow[];
+}
+
+export interface MatrixExtractResponse {
+  project_id: number;
+  total_requested: number;
+  extracted_count: number;
+  failed_count: number;
+  rows: MatrixEvidenceRow[];
+  message: string;
+}
+
 export interface RetrievedChunk {
   chunk_id: number;
   paper_id: number;
@@ -517,5 +557,72 @@ export const api = {
       throw new Error(err.detail || 'Failed to import discovered paper');
     }
     return res.json();
+  },
+
+  // Cross-Paper Comparison Matrix
+  getProjectMatrix: async (projectId: number): Promise<ProjectMatrixResponse> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/matrix`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to fetch project comparison matrix');
+    }
+    return res.json();
+  },
+
+  extractMatrixEvidence: async (
+    projectId: number,
+    paperIds?: number[],
+    forceReextract: boolean = false
+  ): Promise<MatrixExtractResponse> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/matrix/extract`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ paper_ids: paperIds, force_reextract: forceReextract }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to extract matrix evidence');
+    }
+    return res.json();
+  },
+
+  updateMatrixCell: async (
+    projectId: number,
+    paperId: number,
+    update: {
+      objective?: string;
+      methodology?: string;
+      datasets?: string;
+      findings?: string;
+      limitations?: string;
+    }
+  ): Promise<MatrixEvidenceRow> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/matrix/${paperId}`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(update),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to update matrix evidence');
+    }
+    return res.json();
+  },
+
+  exportMatrixCsv: async (projectId: number): Promise<void> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/matrix/export?format=csv`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to export matrix CSV');
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project_${projectId}_matrix.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   },
 };

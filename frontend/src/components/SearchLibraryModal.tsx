@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, X, Plus, Check, Loader2, BookOpen, User as UserIcon, Calendar, FileText } from 'lucide-react';
 import { api, Paper, Project, CuratedPaper } from '../api/client';
+import { toast } from './Toast';
 
 interface SearchLibraryModalProps {
   project: Project;
@@ -48,9 +49,10 @@ export const SearchLibraryModal: React.FC<SearchLibraryModalProps> = ({
     try {
       await api.curatePaper(project.id, paperId, 'included', '');
       setAddedIds((prev) => new Set([...prev, paperId]));
+      toast.success('Paper added to study collection');
       onPaperAdded();
     } catch (err: any) {
-      alert(err.message || 'Failed to add paper to project');
+      toast.error(err.message || 'Failed to add paper to project');
     } finally {
       setAddingId(null);
     }

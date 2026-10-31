@@ -21,12 +21,16 @@ import {
   Calendar,
   Check,
   AlertCircle,
+  Table,
 } from 'lucide-react';
 import { api, Project, CuratedPaper, ProjectMember, User, Paper } from '../api/client';
 import { UploadPdfModal } from './UploadPdfModal';
 import { PaperReaderModal } from './PaperReaderModal';
 import { SearchLibraryModal } from './SearchLibraryModal';
 import { ProjectQAWorkspace } from './ProjectQAWorkspace';
+import { ComparisonMatrixView } from './ComparisonMatrixView';
+import { toast } from './Toast';
+import { ConfirmModal } from './ConfirmModal';
 
 interface ProjectsViewProps {
   currentUser: User | null;
@@ -43,9 +47,27 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showSearchLibraryModal, setShowSearchLibraryModal] = useState(false);
+  const [paperToRemove, setPaperToRemove] = useState<{ id: number; title: string } | null>(null);
+  const [memberToRemove, setMemberToRemove] = useState<{ userId: number; email: string } | null>(null);
   const [readingPaper, setReadingPaper] = useState<Paper | null>(null);
   const [readingPage, setReadingPage] = useState<number | undefined>(undefined);
-  const [activeTab, setActiveTab] = useState<'papers' | 'qa'>('papers');
+  const [activeTab, setActiveTab] = useState<'papers' | 'qa' | 'matrix'>(() => {
+    const saved = localStorage.getItem('litscope_active_project_tab');
+    if (saved === 'papers' || saved === 'qa' || saved === 'matrix') {
+      return saved;
+    }
+    return 'papers';
+  });
+
+  const handleTabChange = (tab: 'papers' | 'qa' | 'matrix') => {
+    setActiveTab(tab);
+    localStorage.setItem('litscope_active_project_tab', tab);
+  };
+
+  const handleSelectProject = (project: Project) => {
+    setSelectedProject(project);
+    localStorage.setItem('litscope_active_project_id', project.id.toString());
+  };
 
   // Project List Search & Sort Filter
   const [projectSearch, setProjectSearch] = useState<string>('');
@@ -88,9 +110,18 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
       const data = await api.getProjects();
       setProjects(data);
       if (data.length > 0) {
-        setSelectedProject((prev) => (prev ? data.find((p) => p.id === prev.id) || data[0] : data[0]));
+        const savedId = localStorage.getItem('litscope_active_project_id');
+        const matched = savedId ? data.find((p) => p.id === Number(savedId)) : null;
+        setSelectedProject((prev) => {
+          const chosen = prev ? data.find((p) => p.id === prev.id) || matched || data[0] : matched || data[0];
+          if (chosen) {
+            localStorage.setItem('litscope_active_project_id', chosen.id.toString());
+          }
+          return chosen;
+        });
       } else {
         setSelectedProject(null);
+        localStorage.removeItem('litscope_active_project_id');
       }
     } catch (err) {
       console.error(err);
@@ -158,26 +189,27 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
       return 0;
     });
 
-  const handleRemovePaperFromStudy = async (
+  const handleRemovePaperFromStudy = (
     e: React.MouseEvent,
     paperId: number,
     paperTitle: string
   ) => {
     e.stopPropagation();
     if (!selectedProject) return;
-    if (
-      !confirm(
-        `Remove "${paperTitle}" from this project study?\n\nNote: The paper will remain permanently safe in the Master Library.`
-      )
-    ) {
-      return;
-    }
+    setPaperToRemove({ id: paperId, title: paperTitle });
+  };
+
+  const handleConfirmRemovePaper = async () => {
+    if (!selectedProject || !paperToRemove) return;
     try {
-      await api.removeCuratedPaper(selectedProject.id, paperId);
-      setCuratedPapers((prev) => prev.filter((p) => p.paper_id !== paperId));
-      setExpandedPaperIds((prev) => prev.filter((id) => id !== paperId));
+      await api.removeCuratedPaper(selectedProject.id, paperToRemove.id);
+      setCuratedPapers((prev) => prev.filter((p) => p.paper_id !== paperToRemove.id));
+      setExpandedPaperIds((prev) => prev.filter((id) => id !== paperToRemove.id));
+      toast.success(`Removed "${paperToRemove.title}" from project study.`);
     } catch (err: any) {
-      alert(err.message || 'Failed to remove paper from study');
+      toast.error(err.message || 'Failed to remove paper from study');
+    } finally {
+      setPaperToRemove(null);
     }
   };
 
@@ -198,6 +230,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
       const created = await api.createProject(formData);
       setProjects([created, ...projects]);
       setSelectedProject(created);
+      localStorage.setItem('litscope_active_project_id', created.id.toString());
+      toast.success(`Created project "${created.name}"`);
       setShowCreateModal(false);
       setFormData({
         name: '',
@@ -208,7 +242,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
         exclusion_criteria: '',
       });
     } catch (err: any) {
-      alert(err.message || 'Failed to create project');
+      toast.error(err.message || 'Failed to create project');
     }
   };
 
@@ -270,20 +304,28 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
     }
   };
 
-  const handleRemoveMember = async (userId: number) => {
-    if (!selectedProject || !confirm('Are you sure you want to remove this collaborator?')) return;
-    try {
-      await api.removeProjectMember(selectedProject.id, userId);
-      setMembers(members.filter((m) => m.user_id !== userId));
+  const handleRemoveMember = (userId: number) => {
+    if (!selectedProject) return;
+    const targetMember = members.find((m) => m.user_id === userId);
+    setMemberToRemove({ userId, email: targetMember?.email || 'this collaborator' });
+  };
 
-      // Automatically update collaborator count in sidebar list without manual refresh
+  const handleConfirmRemoveMember = async () => {
+    if (!selectedProject || !memberToRemove) return;
+    try {
+      await api.removeProjectMember(selectedProject.id, memberToRemove.userId);
+      setMembers(members.filter((m) => m.user_id !== memberToRemove.userId));
+
       const newCount = Math.max(1, (selectedProject.member_count ?? 1) - 1);
       setProjects((prev) =>
         prev.map((p) => (p.id === selectedProject.id ? { ...p, member_count: newCount } : p))
       );
       setSelectedProject((prev) => (prev ? { ...prev, member_count: newCount } : null));
+      toast.success('Removed collaborator from project.');
     } catch (err: any) {
-      alert(err.message || 'Failed to remove member');
+      toast.error(err.message || 'Failed to remove member');
+    } finally {
+      setMemberToRemove(null);
     }
   };
 
@@ -295,10 +337,10 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
         setReadingPaper(target);
         setReadingPage(pageNumber);
       } else {
-        alert('Paper details not found');
+        toast.error('Paper details not found');
       }
     } catch (err: any) {
-      alert('Failed to load paper reader: ' + err.message);
+      toast.error('Failed to load paper reader: ' + err.message);
     }
   };
 
@@ -323,6 +365,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   }
 
   const isOwner = selectedProject?.owner_id === currentUser.id || currentUser.role === 'owner';
+  const currentMember = members.find((m) => m.user_id === currentUser.id);
+  const canEdit = isOwner || currentMember?.role === 'editor' || currentMember?.role === 'owner';
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-3.5">
@@ -441,7 +485,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                   return (
                     <div
                       key={proj.id}
-                      onClick={() => setSelectedProject(proj)}
+                      onClick={() => handleSelectProject(proj)}
                       className={`p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
                         isSelected
                           ? 'bg-white border-indigo-600 ring-2 ring-indigo-100 shadow-sm'
@@ -581,7 +625,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                 {/* Workspace Tabs (Directly below project header) */}
                 <div className="flex border-b border-slate-200 space-x-6">
                   <button
-                    onClick={() => setActiveTab('papers')}
+                    onClick={() => handleTabChange('papers')}
                     className={`pb-2.5 text-xs sm:text-sm font-semibold border-b-2 flex items-center transition ${
                       activeTab === 'papers'
                         ? 'border-indigo-600 text-indigo-600'
@@ -592,7 +636,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                     Papers Collection ({curatedPapers.length})
                   </button>
                   <button
-                    onClick={() => setActiveTab('qa')}
+                    onClick={() => handleTabChange('qa')}
                     className={`pb-2.5 text-xs sm:text-sm font-semibold border-b-2 flex items-center transition ${
                       activeTab === 'qa'
                         ? 'border-indigo-600 text-indigo-600'
@@ -601,6 +645,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                   >
                     <Sparkles className="w-4 h-4 mr-2" />
                     Research Q&A (RAG)
+                  </button>
+                  <button
+                    onClick={() => handleTabChange('matrix')}
+                    className={`pb-2.5 text-xs sm:text-sm font-semibold border-b-2 flex items-center transition ${
+                      activeTab === 'matrix'
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Table className="w-4 h-4 mr-2" />
+                    Comparison Matrix
                   </button>
                 </div>
 
@@ -752,6 +807,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                       </div>
                     )}
                   </div>
+                ) : activeTab === 'matrix' ? (
+                  <ComparisonMatrixView
+                    project={selectedProject}
+                    onOpenPaperReader={handleOpenPaperReader}
+                    canEdit={canEdit}
+                  />
                 ) : (
                   <ProjectQAWorkspace
                     project={selectedProject}
@@ -1014,7 +1075,10 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
         <UploadPdfModal
           projects={projects}
           defaultProjectId={selectedProject.id}
-          onClose={() => setShowUploadModal(false)}
+          onClose={() => {
+            setShowUploadModal(false);
+            loadProjectDetails(selectedProject.id);
+          }}
           onSuccess={() => {
             loadProjectDetails(selectedProject.id);
           }}
@@ -1047,6 +1111,28 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
           }}
         />
       )}
+
+      {/* Confirm Remove Paper from Study Modal */}
+      <ConfirmModal
+        isOpen={!!paperToRemove}
+        title="Remove Paper from Study"
+        message={`Remove "${paperToRemove?.title || ''}" from this project study?\n\nNote: The paper will remain permanently safe in the Master Library.`}
+        confirmText="Remove Paper"
+        danger={true}
+        onConfirm={handleConfirmRemovePaper}
+        onCancel={() => setPaperToRemove(null)}
+      />
+
+      {/* Confirm Remove Collaborator Modal */}
+      <ConfirmModal
+        isOpen={!!memberToRemove}
+        title="Remove Collaborator"
+        message={`Are you sure you want to remove ${memberToRemove?.email || 'this collaborator'} from this project?`}
+        confirmText="Remove Collaborator"
+        danger={true}
+        onConfirm={handleConfirmRemoveMember}
+        onCancel={() => setMemberToRemove(null)}
+      />
     </div>
   );
 };

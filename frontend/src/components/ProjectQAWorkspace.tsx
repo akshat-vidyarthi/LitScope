@@ -16,6 +16,8 @@ import {
   Download,
 } from 'lucide-react';
 import { api, Project, ProjectQuery, RetrievedChunk } from '../api/client';
+import { toast } from './Toast';
+import { ConfirmModal } from './ConfirmModal';
 
 interface ProjectQAWorkspaceProps {
   project: Project;
@@ -34,6 +36,7 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [expandedQueryIds, setExpandedQueryIds] = useState<number[]>([]);
   const [copiedQueryId, setCopiedQueryId] = useState<number | null>(null);
+  const [queryToDelete, setQueryToDelete] = useState<number | null>(null);
 
   const loadHistory = async () => {
     try {
@@ -122,15 +125,22 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
     }
   };
 
-  const handleDeleteQuery = async (e: React.MouseEvent, queryId: number) => {
+  const handleDeleteQuery = (e: React.MouseEvent, queryId: number) => {
     e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this question and its answer from project history?')) return;
+    setQueryToDelete(queryId);
+  };
+
+  const handleConfirmDeleteQuery = async () => {
+    if (!queryToDelete) return;
     try {
-      await api.deleteProjectQuery(project.id, queryId);
-      setQueries(queries.filter((q) => q.id !== queryId));
-      setExpandedQueryIds((prev) => prev.filter((id) => id !== queryId));
+      await api.deleteProjectQuery(project.id, queryToDelete);
+      setQueries((prev) => prev.filter((q) => q.id !== queryToDelete));
+      setExpandedQueryIds((prev) => prev.filter((id) => id !== queryToDelete));
+      toast.success('Query deleted from history');
     } catch (err: any) {
-      alert(err.message || 'Failed to delete query');
+      toast.error(err.message || 'Failed to delete query');
+    } finally {
+      setQueryToDelete(null);
     }
   };
 
@@ -566,6 +576,16 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={queryToDelete !== null}
+        title="Delete Question from History"
+        message="Are you sure you want to delete this question and its grounded synthesis answer from project history?"
+        confirmText="Delete"
+        danger={true}
+        onConfirm={handleConfirmDeleteQuery}
+        onCancel={() => setQueryToDelete(null)}
+      />
     </div>
   );
 };

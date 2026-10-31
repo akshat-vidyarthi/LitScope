@@ -236,11 +236,27 @@ async def upload_paper_pdf(
         if project_id is not None:
             db.execute(
                 text("""
-                    INSERT INTO project_papers (project_id, paper_id)
-                    VALUES (:pid, :paper_id)
-                    ON CONFLICT (project_id, paper_id) DO NOTHING;
+                    INSERT INTO project_papers (project_id, paper_id, inclusion_status)
+                    VALUES (:pid, :paper_id, 'included')
+                    ON CONFLICT (project_id, paper_id) DO UPDATE
+                    SET inclusion_status = 'included';
                 """),
                 {"pid": project_id, "paper_id": paper_id}
+            )
+            db.execute(
+                text("""
+                    INSERT INTO audit_events (user_id, project_id, action, details)
+                    VALUES (:uid, :pid, 'paper_curated', CAST(:details AS JSONB));
+                """),
+                {
+                    "uid": current_user["id"],
+                    "pid": project_id,
+                    "details": json.dumps({
+                        "paper_id": paper_id,
+                        "source": "pdf_upload_duplicate",
+                        "inclusion_status": "included"
+                    })
+                }
             )
             db.commit()
 
@@ -264,7 +280,7 @@ async def upload_paper_pdf(
             "version": dict(existing_version_row),
             "pages_extracted": page_count,
             "is_duplicate": True,
-            "message": "This paper is already in your library."
+            "message": "This paper is already in your library and has been added to your project." if project_id else "This paper is already in your library."
         }
 
     # 6. Persist file to local disk
@@ -397,9 +413,10 @@ async def upload_paper_pdf(
     if project_id is not None:
         db.execute(
             text("""
-                INSERT INTO project_papers (project_id, paper_id)
-                VALUES (:pid, :paper_id)
-                ON CONFLICT (project_id, paper_id) DO NOTHING;
+                INSERT INTO project_papers (project_id, paper_id, inclusion_status)
+                VALUES (:pid, :paper_id, 'included')
+                ON CONFLICT (project_id, paper_id) DO UPDATE
+                SET inclusion_status = 'included';
             """),
             {"pid": project_id, "paper_id": paper_id}
         )

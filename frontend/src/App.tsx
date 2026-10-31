@@ -4,6 +4,7 @@ import { ProjectsView } from './components/ProjectsView';
 import { LibraryView } from './components/LibraryView';
 import { DiscoveryView } from './components/DiscoveryView';
 import { LandingPage } from './components/LandingPage';
+import { ToastContainer } from './components/Toast';
 import { api, User } from './api/client';
 
 export const App: React.FC = () => {
@@ -70,6 +71,7 @@ export const App: React.FC = () => {
   // 2. Authenticated: Render Actual Research Workspace (Projects & Master Library)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
+      <ToastContainer />
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}

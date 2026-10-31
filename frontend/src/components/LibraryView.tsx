@@ -12,10 +12,12 @@ import {
   ArrowUp,
   ArrowDown,
   X,
+  Check,
 } from 'lucide-react';
 import { api, Paper, Project, User } from '../api/client';
 import { UploadPdfModal } from './UploadPdfModal';
 import { PaperReaderModal } from './PaperReaderModal';
+import { toast } from './Toast';
 
 interface LibraryViewProps {
   currentUser: User | null;
@@ -37,8 +39,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
 
   // Add to Project Modal Form
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-  const [curationStatus, setCurationStatus] = useState('included');
   const [curationNotes, setCurationNotes] = useState('');
+  const [projectSearchTerm, setProjectSearchTerm] = useState('');
 
   const loadData = async () => {
     if (!currentUser) {
@@ -83,15 +85,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
       await api.curatePaper(
         selectedProjectId,
         curatingPaper.id,
-        curationStatus,
+        'included',
         curationNotes
       );
       const projName = projects.find((p) => p.id === selectedProjectId)?.name || 'project';
-      alert(`Added "${curatingPaper.title}" to ${projName}!`);
+      toast.success(`Added "${curatingPaper.title}" to ${projName}!`);
       setCuratingPaper(null);
       setCurationNotes('');
+      setProjectSearchTerm('');
     } catch (err: any) {
-      alert(err.message || 'Failed to add paper to project');
+      toast.error(err.message || 'Failed to add paper to project');
     }
   };
 
@@ -105,9 +108,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
         year: editForm.year ? Number(editForm.year) : undefined,
       });
       setEditingPaper(null);
+      toast.success('Paper details updated successfully!');
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update paper');
+      toast.error(err.message || 'Failed to update paper');
     }
   };
 
@@ -402,43 +406,96 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
       {curatingPaper && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4">
-            <h3 className="text-lg font-bold text-slate-900">Add Paper to Project</h3>
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900">Add Paper to Project</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setCuratingPaper(null);
+                  setProjectSearchTerm('');
+                }}
+                className="text-slate-400 hover:text-slate-600 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
             <p className="text-xs text-slate-500 font-medium line-clamp-1">
-              Paper: {curatingPaper.title}
+              Paper: <span className="text-slate-800 font-semibold">{curatingPaper.title}</span>
             </p>
 
             <form onSubmit={handleCurateSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase">
-                  Select Project
-                </label>
-                <select
-                  required
-                  value={selectedProjectId || ''}
-                  onChange={(e) => setSelectedProjectId(Number(e.target.value))}
-                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
-                >
-                  {projects.map((proj) => (
-                    <option key={proj.id} value={proj.id}>
-                      {proj.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 uppercase">
+                    Select Project
+                  </label>
+                  {selectedProjectId && (
+                    <span className="text-[11px] font-medium text-indigo-600 truncate max-w-[200px]">
+                      Selected: {projects.find((p) => p.id === selectedProjectId)?.name}
+                    </span>
+                  )}
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase">
-                  Inclusion Status
-                </label>
-                <select
-                  value={curationStatus}
-                  onChange={(e) => setCurationStatus(e.target.value)}
-                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
-                >
-                  <option value="included">Included (Core evidence study)</option>
-                  <option value="candidate">Candidate (Under preliminary review)</option>
-                  <option value="excluded">Excluded (Screened out of scope)</option>
-                </select>
+                {/* Search Filter for Projects */}
+                <div className="relative mb-2">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search projects..."
+                    value={projectSearchTerm}
+                    onChange={(e) => setProjectSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800"
+                  />
+                  {projectSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setProjectSearchTerm('')}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filterable Project List */}
+                <div className="max-h-44 overflow-y-auto border border-slate-200 rounded-lg p-1 space-y-1 bg-slate-50/50">
+                  {projects
+                    .filter((p) =>
+                      p.name.toLowerCase().includes(projectSearchTerm.toLowerCase()) ||
+                      (p.scope && p.scope.toLowerCase().includes(projectSearchTerm.toLowerCase()))
+                    )
+                    .map((proj) => {
+                      const isSelected = selectedProjectId === proj.id;
+                      return (
+                        <div
+                          key={proj.id}
+                          onClick={() => setSelectedProjectId(proj.id)}
+                          className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer text-xs transition ${
+                            isSelected
+                              ? 'bg-indigo-50 text-indigo-900 border border-indigo-200 font-semibold'
+                              : 'hover:bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          <div className="truncate pr-2">
+                            <p className="truncate font-medium">{proj.name}</p>
+                            {proj.scope && (
+                              <p className="text-[10px] text-slate-400 truncate">{proj.scope}</p>
+                            )}
+                          </div>
+                          {isSelected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
+                        </div>
+                      );
+                    })}
+                  {projects.filter((p) =>
+                    p.name.toLowerCase().includes(projectSearchTerm.toLowerCase()) ||
+                    (p.scope && p.scope.toLowerCase().includes(projectSearchTerm.toLowerCase()))
+                  ).length === 0 && (
+                    <div className="p-4 text-center text-xs text-slate-400">
+                      No projects match "{projectSearchTerm}"
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -457,14 +514,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
               <div className="flex justify-end space-x-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setCuratingPaper(null)}
+                  onClick={() => {
+                    setCuratingPaper(null);
+                    setProjectSearchTerm('');
+                  }}
                   className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+                  disabled={!selectedProjectId}
+                  className="px-4 py-2 bg-indigo-600 disabled:bg-slate-300 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
                 >
                   Add to Project
                 </button>

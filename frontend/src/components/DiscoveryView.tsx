@@ -20,6 +20,7 @@ import {
   Project,
   DiscoveryImportResponse,
 } from '../api/client';
+import { toast } from './Toast';
 
 export const DiscoveryView: React.FC = () => {
   const [query, setQuery] = useState('');
@@ -89,8 +90,9 @@ export const DiscoveryView: React.FC = () => {
       setResults((prev) =>
         prev.map((p) => (p.id === paper.id ? { ...p, in_library: true } : p))
       );
+      toast.success(`Imported "${paper.title}" to library!`);
     } catch (err: any) {
-      alert(err.message || 'Import failed');
+      toast.error(err.message || 'Import failed');
     } finally {
       setImportingId(null);
     }

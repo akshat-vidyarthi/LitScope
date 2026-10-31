@@ -180,11 +180,11 @@ export const UploadPdfModal: React.FC<UploadPdfModalProps> = ({
               )}
               <div className="text-xs space-y-1">
                 <p className="font-semibold text-sm">
-                  {uploadResult.is_duplicate ? 'Already in Library' : 'Extraction Successful'}
+                  {uploadResult.is_duplicate ? (projectId ? 'Paper Added to Project' : 'Already in Library') : 'Extraction Successful'}
                 </p>
                 <p>
                   {uploadResult.is_duplicate
-                    ? 'This paper is already in your library.'
+                    ? (uploadResult.message || (projectId ? 'This paper was already in your Master Library and has now been added to your project.' : 'This paper is already in your library.'))
                     : `Extraction successful • ${uploadResult.pages_extracted} pages extracted.`}
                 </p>
               </div>
@@ -195,7 +195,7 @@ export const UploadPdfModal: React.FC<UploadPdfModalProps> = ({
                 onClick={onClose}
                 className="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition"
               >
-                Close & View Library
+                {projectId ? 'Close & View Project' : 'Close & View Library'}
               </button>
             </div>
           </div>
