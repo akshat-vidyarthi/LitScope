@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, model_validator
 
 
 class ProjectCreate(BaseModel):
@@ -61,6 +61,7 @@ class ProjectMemberResponse(BaseModel):
 class RetrievalQuery(BaseModel):
     query: str = Field(..., min_length=2, max_length=1000, description="Research question or topic to search")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of relevant chunks to retrieve")
+    paper_id: Optional[int] = Field(default=None, description="Optional paper ID to restrict retrieval to a single paper")
 
 
 class RetrievedChunkResponse(BaseModel):
@@ -78,6 +79,16 @@ class RetrievedChunkResponse(BaseModel):
 class ProjectAskRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=2000, description="Research question to ask about project papers")
     top_k: int = Field(default=5, ge=1, le=15, description="Number of supporting passages to retrieve")
+    limit: Optional[int] = Field(default=None, description="Alias for top_k")
+    paper_id: Optional[int] = Field(default=None, description="Optional paper ID to restrict retrieval to a single paper")
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_top_k(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "top_k" not in values and "limit" in values and values["limit"] is not None:
+                values["top_k"] = values["limit"]
+        return values
 
 
 class ProjectQueryResponse(BaseModel):

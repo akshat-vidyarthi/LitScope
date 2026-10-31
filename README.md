@@ -137,9 +137,9 @@ npm run dev
 - [x] **Phase 2:** Authentication, User Roles & Project Curation Workspaces
 - [x] **Phase 3:** PDF Ingestion, Text Extraction & Master Library Reader
 - [x] **Phase 4:** Sentence-Aware Chunking, Hybrid Vector Retrieval & Grounded Q&A Synthesis
-- [ ] **Phase 5:** Scholarly Discovery Connectors (OpenAlex & Crossref)
-- [ ] **Phase 6:** Structured Evidence Extraction & Cross-Paper Comparison Matrix
-- [ ] **Phase 7:** Evidence-Based Candidate Research-Gap Analysis
+- [x] **Phase 5:** Scholarly Discovery Connectors (OpenAlex & Crossref)
+- [x] **Phase 6:** Structured Evidence Extraction & Cross-Paper Comparison Matrix
+- [x] **Phase 7:** Evidence-Based Candidate Research-Gap Analysis
 - [ ] **Phase 8:** Evolving Literature Review & Report Exporting
 - [ ] **Phase 9:** Cloud Deployment & Access Management
 - [ ] **Phase 10:** Evaluation Suite & System Hardening

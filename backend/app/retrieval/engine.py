@@ -10,21 +10,35 @@ def retrieve_project_evidence(
     query: str,
     top_k: int = 5,
     db: Session = None,
+    paper_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     Executes project-scoped hybrid retrieval:
     1. Filters candidate chunks strictly to papers with inclusion_status = 'included' in the project.
-    2. Performs PostgreSQL full-text search (tsvector/plainto_tsquery).
-    3. Computes semantic vector cosine similarity using BGE-small embeddings.
-    4. Combines vector and keyword relevance scores.
+    2. Optionally filters to a specific paper_id if provided.
+    3. Performs PostgreSQL full-text search (tsvector/plainto_tsquery).
+    4. Computes semantic vector cosine similarity using BGE-small embeddings.
+    5. Combines vector and keyword relevance scores.
     5. Returns top_k chunks sorted by final relevance score.
     """
     clean_query = query.strip()
     if not clean_query or db is None:
         return []
 
-    # 1. Fetch chunks belonging strictly to included papers in this project
-    sql = text("""
+    # 1. Fetch chunks belonging strictly to included papers in this project (optionally single paper)
+    where_conditions = [
+        "pp.project_id = :project_id",
+        "pp.inclusion_status = 'included'",
+    ]
+    params: Dict[str, Any] = {"project_id": project_id, "query": clean_query}
+
+    if paper_id is not None:
+        where_conditions.append("c.paper_id = :paper_id")
+        params["paper_id"] = paper_id
+
+    where_clause = " AND ".join(where_conditions)
+
+    sql = text(f"""
         SELECT
             c.id AS chunk_id,
             c.paper_id,
@@ -39,11 +53,10 @@ def retrieve_project_evidence(
         FROM paper_chunks c
         JOIN papers p ON p.id = c.paper_id
         JOIN project_papers pp ON pp.paper_id = c.paper_id
-        WHERE pp.project_id = :project_id
-          AND pp.inclusion_status = 'included';
+        WHERE {where_clause};
     """)
 
-    rows = db.execute(sql, {"project_id": project_id, "query": clean_query}).mappings().fetchall()
+    rows = db.execute(sql, params).mappings().fetchall()
     if not rows:
         return []
 

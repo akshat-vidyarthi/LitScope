@@ -22,6 +22,7 @@ import {
   Check,
   AlertCircle,
   Table,
+  Compass,
 } from 'lucide-react';
 import { api, Project, CuratedPaper, ProjectMember, User, Paper } from '../api/client';
 import { UploadPdfModal } from './UploadPdfModal';
@@ -29,6 +30,7 @@ import { PaperReaderModal } from './PaperReaderModal';
 import { SearchLibraryModal } from './SearchLibraryModal';
 import { ProjectQAWorkspace } from './ProjectQAWorkspace';
 import { ComparisonMatrixView } from './ComparisonMatrixView';
+import { ResearchGapsView } from './ResearchGapsView';
 import { toast } from './Toast';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -51,15 +53,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const [memberToRemove, setMemberToRemove] = useState<{ userId: number; email: string } | null>(null);
   const [readingPaper, setReadingPaper] = useState<Paper | null>(null);
   const [readingPage, setReadingPage] = useState<number | undefined>(undefined);
-  const [activeTab, setActiveTab] = useState<'papers' | 'qa' | 'matrix'>(() => {
+  const [activeTab, setActiveTab] = useState<'papers' | 'qa' | 'matrix' | 'gaps'>(() => {
     const saved = localStorage.getItem('litscope_active_project_tab');
-    if (saved === 'papers' || saved === 'qa' || saved === 'matrix') {
+    if (saved === 'papers' || saved === 'qa' || saved === 'matrix' || saved === 'gaps') {
       return saved;
     }
     return 'papers';
   });
 
-  const handleTabChange = (tab: 'papers' | 'qa' | 'matrix') => {
+  const handleTabChange = (tab: 'papers' | 'qa' | 'matrix' | 'gaps') => {
     setActiveTab(tab);
     localStorage.setItem('litscope_active_project_tab', tab);
   };
@@ -657,6 +659,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                     <Table className="w-4 h-4 mr-2" />
                     Comparison Matrix
                   </button>
+                  <button
+                    onClick={() => handleTabChange('gaps')}
+                    className={`pb-2.5 text-xs sm:text-sm font-semibold border-b-2 flex items-center transition ${
+                      activeTab === 'gaps'
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Compass className="w-4 h-4 mr-2" />
+                    Research Gaps
+                  </button>
                 </div>
 
                 {/* Tab Content */}
@@ -812,6 +825,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                     project={selectedProject}
                     onOpenPaperReader={handleOpenPaperReader}
                     canEdit={canEdit}
+                  />
+                ) : activeTab === 'gaps' ? (
+                  <ResearchGapsView
+                    project={selectedProject}
+                    canEdit={canEdit}
+                    onOpenPaperReader={handleOpenPaperReader}
                   />
                 ) : (
                   <ProjectQAWorkspace

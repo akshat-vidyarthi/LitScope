@@ -171,6 +171,53 @@ export interface MatrixExtractResponse {
   message: string;
 }
 
+export interface EvidenceItem {
+  paper_id: number;
+  paper_title: string;
+  quote: string;
+  page_number?: number;
+  section?: string;
+}
+
+export interface CounterEvidenceItem {
+  paper_id: number;
+  paper_title: string;
+  quote: string;
+  page_number?: number;
+  explanation?: string;
+}
+
+export interface ResearchGap {
+  id: number;
+  project_id: number;
+  paper_id?: number;
+  paper_title?: string;
+  gap_title: string;
+  gap_type: 'methodological' | 'dataset_context' | 'contradiction' | 'author_stated_limitation';
+  description: string;
+  confidence_status: 'supported_within_collection' | 'tentative_candidate' | 'insufficient_evidence';
+  supporting_evidence: EvidenceItem[];
+  counterevidence: CounterEvidenceItem[];
+  review_status: 'pending' | 'validated' | 'dismissed' | 'refined';
+  researcher_notes?: string;
+  refined_question?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GapAnalysisSummary {
+  project_id: number;
+  papers_count: number;
+  pages_count: number;
+  year_min?: number;
+  year_max?: number;
+  gaps: ResearchGap[];
+  total_gaps: number;
+  validated_count: number;
+  pending_count: number;
+  dismissed_count: number;
+}
+
 export interface RetrievedChunk {
   chunk_id: number;
   paper_id: number;
@@ -489,12 +536,18 @@ export const api = {
   askProjectQuestion: async (
     projectId: number,
     question: string,
-    limit: number = 5
+    limit: number = 5,
+    paperId?: number
   ): Promise<ProjectQuery> => {
     const res = await fetch(`${API_BASE}/projects/${projectId}/ask`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ question, limit }),
+      body: JSON.stringify({
+        question,
+        top_k: limit,
+        limit,
+        paper_id: paperId ?? null,
+      }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -621,6 +674,97 @@ export const api = {
     const a = document.createElement('a');
     a.href = url;
     a.download = `project_${projectId}_matrix.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  },
+
+  // Research Gaps
+  getProjectGaps: async (projectId: number): Promise<GapAnalysisSummary> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/gaps`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to fetch research gaps');
+    }
+    return res.json();
+  },
+
+  generateProjectGaps: async (projectId: number, preserveValidated: boolean = true): Promise<GapAnalysisSummary> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/gaps/generate?preserve_validated=${preserveValidated}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to generate candidate research gaps');
+    }
+    return res.json();
+  },
+
+  updateProjectGap: async (
+    projectId: number,
+    gapId: number,
+    update: { review_status?: string; researcher_notes?: string; refined_question?: string }
+  ): Promise<ResearchGap> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/gaps/${gapId}`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(update),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to update research gap');
+    }
+    return res.json();
+  },
+
+  createCustomGap: async (
+    projectId: number,
+    data: {
+      paper_id: number;
+      gap_title: string;
+      gap_type: string;
+      description?: string;
+      confidence_status?: string;
+      researcher_notes?: string;
+      refined_question?: string;
+    }
+  ): Promise<ResearchGap> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/gaps`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to create custom research gap');
+    }
+    return res.json();
+  },
+
+  deleteProjectGap: async (projectId: number, gapId: number): Promise<void> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/gaps/${gapId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to delete research gap');
+    }
+  },
+
+  exportGaps: async (projectId: number, format: 'csv' | 'markdown' = 'csv'): Promise<void> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/gaps/export?format=${format}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to export research gaps as ${format}`);
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project_${projectId}_research_gaps.${format === 'csv' ? 'csv' : 'md'}`;
     document.body.appendChild(a);
     a.click();
     a.remove();

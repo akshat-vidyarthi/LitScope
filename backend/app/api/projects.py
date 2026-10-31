@@ -296,7 +296,13 @@ def retrieve_evidence_for_project(
     Requires at least 'viewer' role in the project.
     """
     require_project_permission(project_id, "viewer", current_user, db)
-    return retrieve_project_evidence(project_id, payload.query, payload.top_k, db)
+    return retrieve_project_evidence(
+        project_id,
+        payload.query,
+        payload.top_k,
+        db,
+        paper_id=payload.paper_id,
+    )
 
 
 # --- Project Membership & Collaborator Invitations (Requires Owner role) ---
@@ -528,7 +534,13 @@ def ask_project_research_question(
     require_project_permission(project_id, "viewer", current_user, db)
 
     # 1. Retrieve evidence
-    evidence = retrieve_project_evidence(project_id, payload.question, payload.top_k, db)
+    evidence = retrieve_project_evidence(
+        project_id,
+        payload.question,
+        payload.top_k,
+        db,
+        paper_id=payload.paper_id,
+    )
 
     # 2. Synthesize answer with citations
     synthesis = synthesize_answer(payload.question, evidence)

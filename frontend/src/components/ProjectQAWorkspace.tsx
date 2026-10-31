@@ -15,7 +15,7 @@ import {
   Trash2,
   Download,
 } from 'lucide-react';
-import { api, Project, ProjectQuery, RetrievedChunk } from '../api/client';
+import { api, Project, ProjectQuery, RetrievedChunk, CuratedPaper } from '../api/client';
 import { toast } from './Toast';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -29,6 +29,8 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
   onOpenPaperReader,
 }) => {
   const [queries, setQueries] = useState<ProjectQuery[]>([]);
+  const [projectPapers, setProjectPapers] = useState<CuratedPaper[]>([]);
+  const [selectedPaperId, setSelectedPaperId] = useState<number | 'all'>('all');
   const [loadingHistory, setLoadingHistory] = useState<boolean>(true);
   const [question, setQuestion] = useState<string>('');
   const [retrievalDepth, setRetrievalDepth] = useState<number>(5);
@@ -41,11 +43,15 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
   const loadHistory = async () => {
     try {
       setLoadingHistory(true);
-      const data = await api.getProjectQueries(project.id);
-      setQueries(data);
+      const [queriesData, papersData] = await Promise.all([
+        api.getProjectQueries(project.id),
+        api.getCuratedPapers(project.id),
+      ]);
+      setQueries(queriesData);
+      setProjectPapers(papersData || []);
       // By default keep queries minimized in lazy column format, or expand the latest
-      if (data.length > 0) {
-        setExpandedQueryIds([data[0].id]);
+      if (queriesData.length > 0) {
+        setExpandedQueryIds([queriesData[0].id]);
       } else {
         setExpandedQueryIds([]);
       }
@@ -68,7 +74,8 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
     setSubmitting(true);
     setError(null);
     try {
-      const result = await api.askProjectQuestion(project.id, q, retrievalDepth);
+      const paperIdParam = selectedPaperId === 'all' ? undefined : selectedPaperId;
+      const result = await api.askProjectQuestion(project.id, q, retrievalDepth, paperIdParam);
       setQueries([result, ...queries]);
       // Auto-expand the newly generated answer
       setExpandedQueryIds((prev) => [result.id, ...prev.filter((id) => id !== result.id)]);
@@ -353,8 +360,33 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
               </button>
             </div>
 
-            {/* Retrieval Depth & Submit Button */}
-            <div className="flex items-center space-x-2">
+            {/* Paper Selection, Depth & Submit */}
+            <div className="flex items-center space-x-2 flex-wrap gap-y-1.5">
+              {/* Scope Dropdown: Specific paper or all papers */}
+              <div className="flex items-center space-x-1.5 bg-white border border-slate-200 rounded-md px-2 py-1 text-xs shadow-xs">
+                <FileText className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                <select
+                  value={selectedPaperId}
+                  onChange={(e) => setSelectedPaperId(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="bg-transparent text-[11px] text-slate-700 font-medium focus:outline-none cursor-pointer max-w-[140px] sm:max-w-[200px] truncate"
+                  title={
+                    selectedPaperId === 'all'
+                      ? 'Synthesizing from all curated papers in this project'
+                      : `Restricted to: ${projectPapers.find((p) => p.paper_id === selectedPaperId)?.title || ''}`
+                  }
+                >
+                  <option value="all">
+                    All Papers {projectPapers.length > 0 ? `(${projectPapers.length})` : ''}
+                  </option>
+                  {projectPapers.map((paper) => (
+                    <option key={paper.paper_id} value={paper.paper_id}>
+                      {paper.title} {paper.year ? `(${paper.year})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Retrieval Depth */}
               <div className="flex items-center space-x-1 bg-white border border-slate-200 rounded-md p-0.5 text-xs shadow-xs">
                 <span className="text-[10px] font-semibold text-slate-500 px-1">Depth:</span>
                 {[3, 5, 8].map((depth) => (
@@ -490,10 +522,24 @@ export const ProjectQAWorkspace: React.FC<ProjectQAWorkspaceProps> = ({
                           <ChevronRight className="w-4 h-4" />
                         )}
                       </div>
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 flex items-center space-x-2">
                         <h4 className="text-sm font-semibold text-slate-900 truncate" title={q.question}>
                           {q.question}
                         </h4>
+                        {(() => {
+                          const distinctPapers = Array.from(new Set(q.retrieved_chunks.map((c) => c.paper_title)));
+                          if (distinctPapers.length === 1) {
+                            return (
+                              <span
+                                className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-md truncate max-w-[140px] sm:max-w-[200px] flex-shrink-0"
+                                title={`Answer grounded in: ${distinctPapers[0]}`}
+                              >
+                                {distinctPapers[0]}
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     </div>
 

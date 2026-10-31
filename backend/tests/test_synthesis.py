@@ -120,3 +120,88 @@ def test_project_ask_api_and_query_history():
     assert len(queries) >= 1
     assert queries[0]["id"] == data["id"]
     assert queries[0]["question"] == "By how much was order execution latency reduced using FPGA accelerators?"
+
+
+def test_project_ask_single_paper_filter():
+    """
+    Verifies that supplying paper_id in POST /ask restricts retrieval
+    strictly to the requested paper rather than searching all project papers.
+    """
+    uid = uuid.uuid4().hex[:8]
+    headers = _get_auth_headers(f"filter_{uid}@example.com", role="owner")
+
+    # 1. Create project
+    proj = client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={"name": f"Paper Scope Test {uid}", "research_question": "Domain specific analysis"}
+    ).json()
+
+    # 2. Upload Paper A
+    text_a = "Quantum key distribution achieves unconditional information-theoretic security against eavesdropping."
+    pdf_a = _create_sample_pdf([text_a])
+    resp_a = client.post(
+        "/api/v1/papers/upload",
+        headers=headers,
+        data={"title": f"Quantum Paper {uid}", "project_id": proj["id"]},
+        files={"file": (f"quantum_{uid}.pdf", pdf_a, "application/pdf")}
+    ).json()
+    paper_a_id = resp_a["paper"]["id"]
+
+    # 3. Upload Paper B
+    text_b = "Proximal policy optimization enables continuous robotic arm trajectory generation in zero-gravity."
+    pdf_b = _create_sample_pdf([text_b])
+    resp_b = client.post(
+        "/api/v1/papers/upload",
+        headers=headers,
+        data={"title": f"Robotics Paper {uid}", "project_id": proj["id"]},
+        files={"file": (f"robotics_{uid}.pdf", pdf_b, "application/pdf")}
+    ).json()
+    paper_b_id = resp_b["paper"]["id"]
+
+    # 4. Query specifically restricted to Paper A
+    ask_a = client.post(
+        f"/api/v1/projects/{proj['id']}/ask",
+        headers=headers,
+        json={
+            "question": "What security properties are achieved?",
+            "top_k": 3,
+            "paper_id": paper_a_id,
+        }
+    )
+    assert ask_a.status_code == 200, ask_a.text
+    data_a = ask_a.json()
+    assert len(data_a["retrieved_chunks"]) > 0
+    # Chunks must strictly come from paper_a
+    for chunk in data_a["retrieved_chunks"]:
+        assert chunk["paper_id"] == paper_a_id
+
+    # 5. Query specifically restricted to Paper B
+    ask_b = client.post(
+        f"/api/v1/projects/{proj['id']}/ask",
+        headers=headers,
+        json={
+            "question": "What optimization algorithm is utilized?",
+            "top_k": 3,
+            "paper_id": paper_b_id,
+        }
+    )
+    assert ask_b.status_code == 200, ask_b.text
+    data_b = ask_b.json()
+    assert len(data_b["retrieved_chunks"]) > 0
+    # Chunks must strictly come from paper_b
+    for chunk in data_b["retrieved_chunks"]:
+        assert chunk["paper_id"] == paper_b_id
+
+    # 6. Query without paper_id (all papers)
+    ask_all = client.post(
+        f"/api/v1/projects/{proj['id']}/ask",
+        headers=headers,
+        json={
+            "question": "Describe security and robotic trajectory algorithms",
+            "top_k": 5,
+        }
+    )
+    assert ask_all.status_code == 200, ask_all.text
+    data_all = ask_all.json()
+    assert len(data_all["retrieved_chunks"]) > 0
