@@ -15,6 +15,9 @@ LitScope transitions academic literature exploration from temporary "chat with a
 * **In-App PDF Reader:** High-fidelity document reader with page navigation, zoom controls, and thumbnail/text inspection.
 * **Deterministic RAG & Evidence Grounding:** Hybrid retrieval (dense vector similarity + PostgreSQL full-text keyword search) coupled with academic synthesis that strictly enforces page-level citations (`[Paper Title, p. X]`).
 * **Interactive Citations:** Clicking citation pills in Q&A responses navigates the reader directly to the cited page.
+* **Cross-Paper Comparison Matrix:** Structured extraction of research objectives, methodologies, datasets, findings, and limitations across all included papers.
+* **Evidence-Based Gap Analysis:** Systematic identification of candidate research gaps across empirical paradigms, methodological limitations, and understudied datasets.
+* **Continuous Literature Review & Export:** Single continuous academic literature review connecting all included studies with target word count presets (200w, 350w, 500w, Custom), standardized author citations, interactive reader badges, and single-click Markdown / BibTeX export.
 
 ---
 
@@ -140,7 +143,7 @@ npm run dev
 - [x] **Phase 5:** Scholarly Discovery Connectors (OpenAlex & Crossref)
 - [x] **Phase 6:** Structured Evidence Extraction & Cross-Paper Comparison Matrix
 - [x] **Phase 7:** Evidence-Based Candidate Research-Gap Analysis
-- [ ] **Phase 8:** Evolving Literature Review & Report Exporting
+- [x] **Phase 8:** Continuous Literature Review Generation & Report Exporting
 - [ ] **Phase 9:** Cloud Deployment & Access Management
 - [ ] **Phase 10:** Evaluation Suite & System Hardening
 
