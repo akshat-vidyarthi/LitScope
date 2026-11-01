@@ -24,6 +24,7 @@ import {
   Table,
   Compass,
   FileText,
+  Edit3,
 } from 'lucide-react';
 import { api, Project, CuratedPaper, ProjectMember, User, Paper } from '../api/client';
 import { UploadPdfModal } from './UploadPdfModal';
@@ -52,7 +53,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showSearchLibraryModal, setShowSearchLibraryModal] = useState(false);
   const [paperToRemove, setPaperToRemove] = useState<{ id: number; title: string } | null>(null);
-  const [memberToRemove, setMemberToRemove] = useState<{ userId: number; email: string } | null>(null);
+  const [memberToRemove, setMemberToRemove] = useState<{ userId: number; username: string } | null>(null);
   const [readingPaper, setReadingPaper] = useState<Paper | null>(null);
   const [readingPage, setReadingPage] = useState<number | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<'papers' | 'qa' | 'matrix' | 'gaps' | 'review'>(() => {
@@ -85,11 +86,83 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const [showProjectCriteria, setShowProjectCriteria] = useState(false);
 
   // Invite Form & Collaborators State
-  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteUsername, setInviteUsername] = useState('');
   const [inviteRole, setInviteRole] = useState('viewer');
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const [inviteWarning, setInviteWarning] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [userSuggestions, setUserSuggestions] = useState<{ id: number; username: string; full_name?: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Edit Project Settings State
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    scope: '',
+    description: '',
+    research_question: '',
+    inclusion_criteria: '',
+    exclusion_criteria: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const handleOpenEditModal = () => {
+    if (!selectedProject) return;
+    setEditFormData({
+      name: selectedProject.name || '',
+      scope: selectedProject.scope || '',
+      description: selectedProject.description || '',
+      research_question: selectedProject.research_question || '',
+      inclusion_criteria: selectedProject.inclusion_criteria || '',
+      exclusion_criteria: selectedProject.exclusion_criteria || '',
+    });
+    setEditError(null);
+    setShowEditModal(true);
+  };
+
+  const handleSaveProjectEdits = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProject || !editFormData.name.trim()) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const updated = await api.updateProject(selectedProject.id, {
+        name: editFormData.name.trim(),
+        scope: editFormData.scope.trim() || undefined,
+        description: editFormData.description.trim() || undefined,
+        research_question: editFormData.research_question.trim() || undefined,
+        inclusion_criteria: editFormData.inclusion_criteria.trim() || undefined,
+        exclusion_criteria: editFormData.exclusion_criteria.trim() || undefined,
+      });
+      setSelectedProject(updated);
+      setProjects((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
+      setShowEditModal(false);
+    } catch (err: any) {
+      setEditError(err.message || 'Failed to update project settings');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const query = inviteUsername.trim();
+    if (query.length >= 1) {
+      const timer = setTimeout(async () => {
+        try {
+          const results = await api.searchUsers(query);
+          setUserSuggestions(results);
+          setShowSuggestions(true);
+        } catch {
+          setUserSuggestions([]);
+        }
+      }, 200);
+      return () => clearTimeout(timer);
+    } else {
+      setUserSuggestions([]);
+      setShowSuggestions(false);
+    }
+  }, [inviteUsername]);
   const [updatingRoleId, setUpdatingRoleId] = useState<number | null>(null);
 
   // Form State
@@ -155,13 +228,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
     );
   };
 
-  const handleExpandAllPapers = () => {
-    setExpandedPaperIds(curatedPapers.map((cp) => cp.paper_id));
-  };
 
-  const handleCollapseAllPapers = () => {
-    setExpandedPaperIds([]);
-  };
 
   // Filter and sort active projects for the left sidebar lazy column
   const filteredProjects = projects
@@ -252,20 +319,20 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
 
   const handleInviteMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProject || !inviteEmail.trim()) return;
+    if (!selectedProject || !inviteUsername.trim()) return;
 
     setInviteWarning(null);
     setInviteError(null);
 
-    const targetEmail = inviteEmail.trim().toLowerCase();
-    const alreadyMember = members.some((m) => m.email.toLowerCase() === targetEmail);
+    const targetUsername = inviteUsername.trim().toLowerCase();
+    const alreadyMember = members.some((m) => m.username.toLowerCase() === targetUsername);
     if (alreadyMember) {
-      setInviteWarning(`${inviteEmail.trim()} is already a collaborator on this project.`);
+      setInviteWarning(`@${inviteUsername.trim()} is already a collaborator on this project.`);
       return;
     }
 
     try {
-      const added = await api.addProjectMember(selectedProject.id, inviteEmail.trim(), inviteRole);
+      const added = await api.addProjectMember(selectedProject.id, inviteUsername.trim(), inviteRole);
       setMembers((prev) => {
         const existingIdx = prev.findIndex((m) => m.user_id === added.user_id);
         if (existingIdx >= 0) {
@@ -275,7 +342,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
         }
         return [...prev, added];
       });
-      setInviteEmail('');
+      setInviteUsername('');
       setInviteSuccess(true);
       setTimeout(() => {
         setInviteSuccess(false);
@@ -311,7 +378,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const handleRemoveMember = (userId: number) => {
     if (!selectedProject) return;
     const targetMember = members.find((m) => m.user_id === userId);
-    setMemberToRemove({ userId, email: targetMember?.email || 'this collaborator' });
+    setMemberToRemove({ userId, username: targetMember?.username ? `@${targetMember.username}` : 'this collaborator' });
   };
 
   const handleConfirmRemoveMember = async () => {
@@ -368,9 +435,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
     );
   }
 
-  const isOwner = selectedProject?.owner_id === currentUser.id || currentUser.role === 'owner';
   const currentMember = members.find((m) => m.user_id === currentUser.id);
-  const canEdit = isOwner || currentMember?.role === 'editor' || currentMember?.role === 'owner';
+  const myProjectRole = (
+    selectedProject?.owner_id === currentUser.id
+      ? 'owner'
+      : (currentMember?.role || selectedProject?.current_user_role || 'viewer')
+  ).toLowerCase();
+  const isOwner = myProjectRole === 'owner';
+  const canEdit = isOwner || myProjectRole === 'editor';
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-3.5">
@@ -508,6 +580,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                        <span className={`inline-flex items-center text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                          (proj.owner_id === currentUser.id || proj.current_user_role === 'owner')
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            : proj.current_user_role === 'editor'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}>
+                          {proj.owner_id === currentUser.id ? 'owner' : (proj.current_user_role || 'viewer')}
+                        </span>
                         <span className="inline-flex items-center text-[10px] font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full border border-slate-200">
                           <Users className="w-3 h-3 mr-1 text-slate-400" />
                           {memberCount} {memberCount === 1 ? 'member' : 'members'}
@@ -544,8 +625,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                     <h2 className="text-lg font-bold text-slate-900 truncate" title={selectedProject.name}>
                       {selectedProject.name}
                     </h2>
-                    <span className="text-xs text-slate-400 font-mono flex-shrink-0">
-                      #{selectedProject.id}
+                    <span className={`text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border flex-shrink-0 ${
+                      myProjectRole === 'owner'
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        : myProjectRole === 'editor'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}>
+                      {myProjectRole}
                     </span>
                   </div>
 
@@ -577,6 +664,18 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                       <Users className="w-3.5 h-3.5 mr-1.5 text-slate-500" />
                       Collaborators ({members.length})
                     </button>
+
+                    {(myProjectRole === 'owner' || myProjectRole === 'editor') && (
+                      <button
+                        type="button"
+                        onClick={handleOpenEditModal}
+                        className="inline-flex items-center px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg border border-indigo-200 transition"
+                        title="Edit project name, scope, and criteria"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 mr-1" />
+                        <span>Edit Project</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -693,25 +792,6 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                         <h3 className="font-semibold text-slate-900 text-sm">
                           Curated Evidence Papers ({curatedPapers.length})
                         </h3>
-                        {curatedPapers.length > 0 && (
-                          <div className="flex items-center space-x-2 text-xs">
-                            <button
-                              type="button"
-                              onClick={handleExpandAllPapers}
-                              className="text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
-                            >
-                              Expand All
-                            </button>
-                            <span className="text-slate-300">•</span>
-                            <button
-                              type="button"
-                              onClick={handleCollapseAllPapers}
-                              className="text-slate-500 hover:text-slate-700 font-medium cursor-pointer"
-                            >
-                              Minimize All
-                            </button>
-                          </div>
-                        )}
                       </div>
 
                       <div className="flex items-center space-x-2">
@@ -774,15 +854,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                                 </div>
 
                                 <div className="flex items-center space-x-1.5 flex-shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => handleRemovePaperFromStudy(e, cp.paper_id, cp.title)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                    title="Remove from this study (keeps paper in Master Library)"
-                                    aria-label="Remove paper from study"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  {canEdit && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleRemovePaperFromStudy(e, cp.paper_id, cp.title)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                      title="Remove from this study (keeps paper in Master Library)"
+                                      aria-label="Remove paper from study"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
                                 </div>
                               </div>
 
@@ -894,19 +976,64 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                   <UserPlus className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
                   Invite Collaborator
                 </h4>
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    required
-                    placeholder="colleague@university.edu"
-                    value={inviteEmail}
-                    onChange={(e) => {
-                      setInviteEmail(e.target.value);
-                      if (inviteWarning) setInviteWarning(null);
-                      if (inviteError) setInviteError(null);
-                    }}
-                    className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
-                  />
+                <div className="flex gap-2 relative">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      pattern="^[a-zA-Z0-9_.-]+$"
+                      required
+                      autoComplete="off"
+                      placeholder="Search by name or username (e.g. alex_rivera)"
+                      value={inviteUsername}
+                      onChange={(e) => {
+                        setInviteUsername(e.target.value);
+                        if (inviteWarning) setInviteWarning(null);
+                        if (inviteError) setInviteError(null);
+                      }}
+                      onFocus={() => {
+                        if (userSuggestions.length > 0) setShowSuggestions(true);
+                      }}
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                    />
+
+                    {/* Autocomplete Recommendations Dropdown */}
+                    {showSuggestions && userSuggestions.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto divide-y divide-slate-100">
+                        {userSuggestions.map((u) => {
+                          const isAlready = members.some((m) => m.user_id === u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              disabled={isAlready}
+                              onClick={() => {
+                                setInviteUsername(u.username);
+                                setShowSuggestions(false);
+                              }}
+                              className="w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-indigo-50/50 disabled:opacity-50 disabled:hover:bg-transparent transition cursor-pointer"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-[10px] shrink-0">
+                                  {u.full_name ? u.full_name[0].toUpperCase() : u.username[0].toUpperCase()}
+                                </div>
+                                <div className="truncate">
+                                  <p className="font-semibold text-slate-800 leading-tight truncate">
+                                    {u.full_name || `@${u.username}`}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 font-mono">@{u.username}</p>
+                                </div>
+                              </div>
+                              {isAlready && (
+                                <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                                  Already Member
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                   <select
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value)}
@@ -962,9 +1089,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                 >
                   <div>
                     <p className="text-xs font-semibold text-slate-900">
-                      {m.full_name || m.email}
+                      {m.full_name || `@${m.username}`}
                     </p>
-                    <p className="text-[11px] text-slate-500">{m.email}</p>
+                    <p className="text-[11px] text-slate-500">@{m.username}</p>
                   </div>
                   <div className="flex items-center space-x-2">
                     {m.role === 'owner' ? (
@@ -1108,6 +1235,134 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
           </div>
         </div>
       )}
+
+      {/* Edit Project Settings Modal */}
+      {showEditModal && selectedProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 my-8">
+            <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <Edit3 className="w-5 h-5 text-indigo-600" />
+                <h3 className="text-lg font-bold text-slate-900">Edit Project Settings</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProjectEdits} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase">
+                  Project Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editFormData.name}
+                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  placeholder="e.g. Distributed Consensus in Cloud Systems"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase">
+                  Research Scope
+                </label>
+                <input
+                  type="text"
+                  value={editFormData.scope}
+                  onChange={(e) => setEditFormData({ ...editFormData, scope: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  placeholder="e.g. 2018-2025 Byzantine fault tolerance protocols"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase">
+                  Description / Overview
+                </label>
+                <textarea
+                  rows={3}
+                  value={editFormData.description}
+                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none"
+                  placeholder="Brief summary of research objectives and background..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase">
+                  Primary Research Question
+                </label>
+                <input
+                  type="text"
+                  value={editFormData.research_question}
+                  onChange={(e) => setEditFormData({ ...editFormData, research_question: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  placeholder="e.g. What latency tradeoffs exist between Raft and PBFT?"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase">
+                    Inclusion Criteria
+                  </label>
+                  <input
+                    type="text"
+                    value={editFormData.inclusion_criteria}
+                    onChange={(e) => setEditFormData({ ...editFormData, inclusion_criteria: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    placeholder="e.g. Peer-reviewed, empirical"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase">
+                    Exclusion Criteria
+                  </label>
+                  <input
+                    type="text"
+                    value={editFormData.exclusion_criteria}
+                    onChange={(e) => setEditFormData({ ...editFormData, exclusion_criteria: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    placeholder="e.g. Non-English, preprints"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={editSaving}
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSaving || !editFormData.name.trim()}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition"
+                >
+                  {editSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {/* Upload PDF Modal */}
       {showUploadModal && selectedProject && (
         <UploadPdfModal
@@ -1165,7 +1420,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
       <ConfirmModal
         isOpen={!!memberToRemove}
         title="Remove Collaborator"
-        message={`Are you sure you want to remove ${memberToRemove?.email || 'this collaborator'} from this project?`}
+        message={`Are you sure you want to remove ${memberToRemove?.username || 'this collaborator'} from this project?`}
         confirmText="Remove Collaborator"
         danger={true}
         onConfirm={handleConfirmRemoveMember}

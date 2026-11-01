@@ -115,12 +115,14 @@ def search_openalex(
 
             pdf_url = (
                 primary_loc.get("pdf_url")
-                or oa.get("oa_url")
                 or (w.get("best_oa_location") or {}).get("pdf_url")
             )
+            oa_url = oa.get("oa_url")
+            if not pdf_url and oa_url and oa_url.lower().split("?")[0].endswith(".pdf"):
+                pdf_url = oa_url
 
-            # Strict requirement: Only return papers where PDF is actually available
-            if pdf_only and not pdf_url:
+            # Strict requirement: Only return papers where PDF is actually available (no metadata-only records)
+            if not pdf_url or not pdf_url.strip().startswith("http"):
                 continue
 
             landing_page = (

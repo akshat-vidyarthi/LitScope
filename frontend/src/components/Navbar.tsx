@@ -31,7 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <span className="font-bold text-lg text-slate-900 tracking-tight">LitScope</span>
               <span className="ml-2 text-xs font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
-                Phase 5 Discovery & RAG
+                Literature Intelligence
               </span>
             </div>
           </div>
@@ -98,15 +98,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs">
                     {currentUser.full_name
                       ? currentUser.full_name[0].toUpperCase()
-                      : currentUser.email[0].toUpperCase()}
+                      : (currentUser.username ? currentUser.username[0].toUpperCase() : 'U')}
                   </div>
                   <div className="hidden sm:block text-left">
                     <p className="text-xs font-semibold text-slate-800 leading-tight">
-                      {currentUser.full_name || currentUser.email.split('@')[0]}
+                      {currentUser.full_name || `@${currentUser.username}`}
                     </p>
-                    <span className="text-[10px] uppercase font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-100">
-                      {currentUser.role}
-                    </span>
+                    {currentUser.full_name && (
+                      <p className="text-[10px] text-slate-400 font-mono leading-none mt-0.5">
+                        @{currentUser.username}
+                      </p>
+                    )}
                   </div>
                 </div>
 

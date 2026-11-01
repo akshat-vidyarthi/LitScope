@@ -135,6 +135,7 @@ def test_discovery_import_endpoint():
     assert dup_res.json()["paper_id"] == res_data["paper_id"]
 
 
+@patch("app.discovery.scopus.settings.ELSEVIER_API_KEY", "test_key")
 @patch("app.discovery.scopus._resolve_doi_pdf")
 @patch("httpx.Client.get")
 def test_scopus_search_connector(mock_http_get, mock_resolve_pdf):

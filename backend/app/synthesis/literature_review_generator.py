@@ -5,7 +5,6 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.core.config import settings
-from app.synthesis.humanizer import dewatermark_academic_prose
 
 
 def _format_author_citation(authors_str: Optional[str], title: str, index: int) -> str:
@@ -401,9 +400,6 @@ def generate_continuous_literature_review(
     cleaned = re.sub(r'^\*\*Literature Review\*\*.*\n+', '', cleaned, flags=re.IGNORECASE)
     # Strip any generated references section from the end (since references are handled structured)
     cleaned = re.split(r'\n+(?:##?\s*)?References\b', cleaned, flags=re.IGNORECASE)[0].strip()
-
-    # Apply automated Anti-Watermark / Humanizer pipeline
-    cleaned = dewatermark_academic_prose(cleaned)
 
     actual_words = len(cleaned.split())
 

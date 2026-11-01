@@ -14,7 +14,7 @@ STRICT ACADEMIC GUIDELINES:
 4. Do NOT extrapolate, hallucinate, or assume facts not directly stated in the evidence passages.
 5. If the provided evidence does not contain sufficient information to answer the question, state:
    "The curated papers in this project do not contain sufficient evidence to answer this question."
-6. Write in professional, objective academic prose."""
+6. Write in professional, objective academic prose with smooth, complete sentences: ensure there are no abrupt starts or cut-offs, and that full technical context is maintained."""
 
 
 def format_evidence_context(evidence_chunks: List[Dict[str, Any]]) -> str:

@@ -12,7 +12,7 @@ Your task is to analyze the provided research paper passages and extract structu
 STRICT INSTRUCTIONS:
 1. Extract factual information based ONLY on the provided evidence passages. Do NOT extrapolate or assume.
 2. For each field, provide:
-   - "summary": A concise, clear summary (1-3 direct academic sentences).
+   - "summary": A well-formed, complete academic summary (1-3 complete grammatical sentences). Each summary MUST begin cleanly with a clear subject and end with proper terminal punctuation (period). Never start abruptly with dangling conjunctions or cut off mid-thought; retain the full context of the claim.
    - "page": The exact integer page number where this evidence is grounded (or null if absent).
    - "quote": A brief verbatim sentence or phrase from the text confirming this claim.
 3. If a dimension is not reported or cannot be determined from the passages, set "summary" to "Not explicitly reported in retrieved passages" and "page" to null.
@@ -308,6 +308,59 @@ def _call_llm_for_matrix(context: str, paper_title: str) -> Optional[Dict[str, A
     return None
 
 
+def _format_complete_sentence(text: str, max_chars: int = 350) -> str:
+    """
+    Ensures extracted text forms complete, natural grammatical sentences:
+    - Strips leading fragments, lone conjunctions ('and', 'or', 'but'), numbers, or bracketed citations.
+    - Capitalizes the opening word properly.
+    - Preserves full context and avoids mid-word or mid-clause truncation.
+    - Guarantees termination with a valid punctuation mark (. ! ?).
+    """
+    if not text:
+        return ""
+    cleaned = " ".join(text.split()).strip()
+
+    # 1. Clean abrupt starts (leading numbers, bracketed citations, lone conjunctions, punctuation)
+    cleaned = re.sub(r'^(?:\[\d+(?:,\s*\d+)*\]|\(\d{4}\)|[\d\.\-\)\:\,\;\s]+)+', '', cleaned)
+    cleaned = re.sub(r'^(?:and|or|but|furthermore|moreover|also|where|which|that|in\s+addition,?\s*)\s+', '', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip()
+
+    if not cleaned:
+        return ""
+
+    # Capitalize the first character
+    if cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+
+    # 2. If within limit and ends with punctuation, return directly
+    if len(cleaned) <= max_chars and cleaned.endswith(('.', '!', '?')):
+        return cleaned
+
+    # If within limit but missing terminal punctuation, add '.'
+    if len(cleaned) <= max_chars:
+        return cleaned.rstrip(',;:- ') + '.'
+
+    # Pattern for true sentence-ending punctuation (avoids decimals like 94.2% or abbreviations like et al.)
+    pattern = r'(?<!\d)(?<!et al)(?<!e\.g)(?<!i\.e)(?<!Fig)(?<![A-Z])[\.!\?](?:\s+|$)'
+
+    sub = cleaned[:max_chars]
+    matches = [m.end() for m in re.finditer(pattern, sub)]
+    if matches and matches[-1] >= 40:
+        return cleaned[:matches[-1]].strip()
+
+    # If full sentence finishes within next 100 characters, include it
+    extended = cleaned[:max_chars + 100]
+    ext_matches = [m.end() for m in re.finditer(pattern, extended)]
+    if ext_matches and ext_matches[-1] >= 40:
+        return cleaned[:ext_matches[-1]].strip()
+
+    # Otherwise slice cleanly at last word boundary
+    last_space = sub.rfind(' ')
+    if last_space > 40:
+        return sub[:last_space].rstrip(',;:- ') + '.'
+    return sub.rstrip(',;:- ') + '.'
+
+
 def _rule_based_fallback_extraction(context: str, paper_title: str) -> Dict[str, Any]:
     """Deterministic heuristic extraction if no LLM inference server is reachable."""
     sentences = re.split(r"(?<=[.!?])\s+", context)
@@ -332,15 +385,15 @@ def _rule_based_fallback_extraction(context: str, paper_title: str) -> Dict[str,
 
         # Objective
         if any(k in lower for k in ["we propose", "in this paper we", "our goal", "this work presents", "we introduce", "this study aims"]):
-            objective = s_clean[:220]
+            objective = _format_complete_sentence(s_clean, 350)
 
         # Methodology
         elif any(k in lower for k in ["methodology", "architecture", "algorithm", "neural network", "pipeline", "framework"]):
-            methodology = s_clean[:220]
+            methodology = _format_complete_sentence(s_clean, 350)
 
         # Datasets
         elif any(k in lower for k in ["dataset", "benchmark", "corpus", "samples", "collected from", "training set"]):
-            datasets = s_clean[:220]
+            datasets = _format_complete_sentence(s_clean, 350)
 
         # Result & Analysis scoring
         score = sum(1 for k in metric_kw if k in lower)
@@ -350,7 +403,7 @@ def _rule_based_fallback_extraction(context: str, paper_title: str) -> Dict[str,
 
         if total_m_score > best_finding_score:
             best_finding_score = total_m_score
-            findings = s_clean[:260]
+            findings = _format_complete_sentence(s_clean, 350)
 
     # Robust Multi-Sentence Result & Analysis Section Extraction
     result_match = re.search(
@@ -365,11 +418,7 @@ def _rule_based_fallback_extraction(context: str, paper_title: str) -> Dict[str,
         clean_r = " ".join(clean_r.split())
         r_sentences = [rs.strip() for rs in re.split(r"(?<=[.!?])\s+", clean_r) if len(rs.strip()) > 15]
         if r_sentences:
-            findings = " ".join(r_sentences[:3])
-            if len(findings) > 420:
-                last_p = findings[:420].rfind(".")
-                if last_p > 100:
-                    findings = findings[:last_p + 1]
+            findings = _format_complete_sentence(" ".join(r_sentences[:3]), 400)
 
     # Robust Multi-Sentence Conclusion Extraction
     conclusion_match = re.search(
@@ -382,11 +431,7 @@ def _rule_based_fallback_extraction(context: str, paper_title: str) -> Dict[str,
         clean_c = re.sub(r"(?:Fig(?:\.|ure)?\s*\d+\.?|Table\s*\d+\.?).*?(?=\.|\n|$)", "", conclusion_raw)
         c_sentences = [cs.strip() for cs in re.split(r"(?<=[.!?])\s+", clean_c) if len(cs.strip()) > 20]
         if c_sentences:
-            limitations = " ".join(c_sentences[:3])
-            if len(limitations) > 420:
-                last_period = limitations[:420].rfind(".")
-                if last_period > 100:
-                    limitations = limitations[:last_period + 1]
+            limitations = _format_complete_sentence(" ".join(c_sentences[:3]), 400)
     else:
         conclusion_kw = [
             "in conclusion", "to conclude", "conclude that", "in summary",
@@ -404,10 +449,7 @@ def _rule_based_fallback_extraction(context: str, paper_title: str) -> Dict[str,
                 best_c_score = c_score
                 next_s = sentences[i+1].strip() if i+1 < len(sentences) and len(sentences[i+1].strip()) > 15 else ""
                 combined = f"{s_clean} {next_s}".strip() if next_s else s_clean
-                limitations = combined[:400]
-                last_p = limitations.rfind(".")
-                if last_p > 80:
-                    limitations = limitations[:last_p + 1]
+                limitations = _format_complete_sentence(combined, 400)
 
     return {
         "objective": {"summary": objective, "page": 1, "quote": None},
@@ -465,11 +507,23 @@ def extract_paper_matrix_evidence(
     find_item = extracted_json.get("findings") or {}
     lim_item = extracted_json.get("conclusion") or extracted_json.get("limitations") or {}
 
-    objective_text = obj_item.get("summary") if isinstance(obj_item, dict) else str(obj_item)
-    methodology_text = meth_item.get("summary") if isinstance(meth_item, dict) else str(meth_item)
-    datasets_text = data_item.get("summary") if isinstance(data_item, dict) else str(data_item)
-    findings_text = find_item.get("summary") if isinstance(find_item, dict) else str(find_item)
-    limitations_text = lim_item.get("summary") if isinstance(lim_item, dict) else str(lim_item)
+    objective_text = obj_item.get("summary") if isinstance(obj_item, dict) else str(obj_item or "")
+    methodology_text = meth_item.get("summary") if isinstance(meth_item, dict) else str(meth_item or "")
+    datasets_text = data_item.get("summary") if isinstance(data_item, dict) else str(data_item or "")
+    findings_text = find_item.get("summary") if isinstance(find_item, dict) else str(find_item or "")
+    limitations_text = lim_item.get("summary") if isinstance(lim_item, dict) else str(lim_item or "")
+
+    # Ensure answers have no abrupt starts or cut-offs and retain complete context
+    if objective_text and "not explicitly reported" not in objective_text.lower():
+        objective_text = _format_complete_sentence(objective_text, 350)
+    if methodology_text and "not explicitly reported" not in methodology_text.lower():
+        methodology_text = _format_complete_sentence(methodology_text, 350)
+    if datasets_text and "not explicitly reported" not in datasets_text.lower():
+        datasets_text = _format_complete_sentence(datasets_text, 350)
+    if findings_text and "not explicitly reported" not in findings_text.lower():
+        findings_text = _format_complete_sentence(findings_text, 400)
+    if limitations_text and "not explicitly reported" not in limitations_text.lower():
+        limitations_text = _format_complete_sentence(limitations_text, 400)
 
     provenance_map = {
         "objective": {"page": obj_item.get("page"), "quote": obj_item.get("quote")} if isinstance(obj_item, dict) else {},

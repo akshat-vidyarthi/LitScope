@@ -40,7 +40,7 @@ def get_current_user(
 
     user_id = int(payload["sub"])
     sql = text("""
-        SELECT id, email, full_name, role, is_active, created_at
+        SELECT id, username, email, full_name, role, is_active, created_at
         FROM users
         WHERE id = :user_id AND is_active = TRUE;
     """)
@@ -91,10 +91,6 @@ def require_project_permission(
     Enforces that the current authenticated user has at least the required role
     (viewer, editor, owner) for the specified project.
     """
-    # System administrator / owner has universal access
-    if current_user.get("role") == "owner":
-        return current_user
-
     role = get_project_member_role(project_id, current_user["id"], db)
     if not role:
         raise HTTPException(

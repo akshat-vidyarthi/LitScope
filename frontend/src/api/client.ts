@@ -1,6 +1,7 @@
 export interface User {
   id: number;
-  email: string;
+  username: string;
+  email?: string;
   full_name?: string;
   role: string;
   is_active: boolean;
@@ -17,6 +18,7 @@ export interface Project {
   exclusion_criteria?: string;
   owner_id?: number;
   member_count?: number;
+  current_user_role?: 'owner' | 'editor' | 'viewer';
   created_at: string;
 }
 
@@ -24,7 +26,8 @@ export interface ProjectMember {
   membership_id: number;
   project_id: number;
   user_id: number;
-  email: string;
+  username: string;
+  email?: string;
   full_name?: string;
   role: string;
   created_at: string;
@@ -267,7 +270,7 @@ export interface LiteratureReviewListResponse {
   papers_count: number;
 }
 
-const API_BASE = '/api/v1';
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || '/api/v1';
 
 const getAuthHeaders = (): HeadersInit => {
   const token = localStorage.getItem('litscope_token');
@@ -291,11 +294,11 @@ const getAuthHeadersNoContentType = (): HeadersInit => {
 
 export const api = {
   // Auth
-  register: async (email: string, password: string, fullName?: string): Promise<User> => {
+  register: async (username: string, password: string, fullName?: string): Promise<User> => {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, full_name: fullName }),
+      body: JSON.stringify({ username, password, full_name: fullName }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -304,11 +307,11 @@ export const api = {
     return res.json();
   },
 
-  login: async (email: string, password: string): Promise<{ access_token: string; user: User }> => {
+  login: async (username: string, password: string): Promise<{ access_token: string; user: User }> => {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ username, password }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -334,6 +337,15 @@ export const api = {
 
   logout: () => {
     localStorage.removeItem('litscope_token');
+  },
+
+  searchUsers: async (query: string): Promise<{ id: number; username: string; full_name?: string }[]> => {
+    if (!query.trim()) return [];
+    const res = await fetch(`${API_BASE}/auth/users/search?q=${encodeURIComponent(query.trim())}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
   },
 
   // Health
@@ -369,6 +381,19 @@ export const api = {
     return res.json();
   },
 
+  updateProject: async (id: number, data: Partial<Project>): Promise<Project> => {
+    const res = await fetch(`${API_BASE}/projects/${id}`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to update project');
+    }
+    return res.json();
+  },
+
   // Project Members & Collaborator Invitations
   getProjectMembers: async (projectId: number): Promise<ProjectMember[]> => {
     const res = await fetch(`${API_BASE}/projects/${projectId}/members`, {
@@ -378,11 +403,11 @@ export const api = {
     return res.json();
   },
 
-  addProjectMember: async (projectId: number, email: string, role: string): Promise<ProjectMember> => {
+  addProjectMember: async (projectId: number, username: string, role: string): Promise<ProjectMember> => {
     const res = await fetch(`${API_BASE}/projects/${projectId}/members`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ email, role }),
+      body: JSON.stringify({ username, role }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -455,10 +480,11 @@ export const api = {
   },
 
   // Master Library Papers
-  getPapers: async (search?: string, year?: number): Promise<Paper[]> => {
+  getPapers: async (search?: string, year?: number, pdfOnly: boolean = true): Promise<Paper[]> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     if (year) params.append('year', year.toString());
+    if (pdfOnly) params.append('pdf_only', 'true');
     const res = await fetch(`${API_BASE}/papers?${params.toString()}`, {
       headers: getAuthHeaders(),
     });

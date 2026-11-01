@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookOpen, Shield, CheckCircle2, Lock, Mail, User as UserIcon, ArrowRight, Layers, FileText } from 'lucide-react';
+import { BookOpen, Shield, CheckCircle2, Lock, User as UserIcon, ArrowRight, Layers, FileText } from 'lucide-react';
 import { api, User } from '../api/client';
 
 interface LandingPageProps {
@@ -9,7 +9,7 @@ interface LandingPageProps {
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onLoginSuccess, dbStatus }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -25,14 +25,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginSuccess, dbStat
     try {
       if (authMode === 'register') {
         // 1. Register Account
-        await api.register(email, password, fullName || undefined);
+        await api.register(username.trim().toLowerCase(), password, fullName || undefined);
         // 2. Redirect to Log In mode with pre-filled email and success message
         setAuthMode('login');
         setPassword('');
         setSuccessMessage('Account created successfully! Please sign in with your credentials.');
       } else {
         // 3. Log In and redirect to actual workspace
-        const loginData = await api.login(email, password);
+        const loginData = await api.login(username.trim().toLowerCase(), password);
         onLoginSuccess(loginData.user);
       }
     } catch (err: any) {
@@ -178,16 +178,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginSuccess, dbStat
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                  Email Address
+                  Username
                 </label>
                 <div className="relative mt-1">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
-                    type="email"
+                    type="text"
                     required
-                    placeholder="researcher@university.edu"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    pattern="^[a-zA-Z0-9_.-]+$"
+                    title="Username may only contain letters, numbers, underscores, dots, or hyphens."
+                    placeholder="e.g. alex_rivera"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
                     className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />
                 </div>

@@ -37,6 +37,19 @@ def test_project_lifecycle():
     assert get_res.status_code == 200
     assert get_res.json()["research_question"] == payload["research_question"]
 
+    # 2.5 Update the project (name, scope, research_question)
+    update_payload = {
+        "name": "Updated GenAI Operations Study",
+        "scope": "2024-2027 enterprise case studies",
+        "research_question": "What is the measurable reduction in dispatch latency?",
+    }
+    update_res = client.patch(f"/api/v1/projects/{project_id}", json=update_payload, headers=headers)
+    assert update_res.status_code == 200
+    updated_data = update_res.json()
+    assert updated_data["name"] == "Updated GenAI Operations Study"
+    assert updated_data["scope"] == "2024-2027 enterprise case studies"
+    assert updated_data["research_question"] == "What is the measurable reduction in dispatch latency?"
+
     # 3. List projects
     list_res = client.get("/api/v1/projects", headers=headers)
     assert list_res.status_code == 200

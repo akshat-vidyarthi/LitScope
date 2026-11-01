@@ -115,8 +115,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ currentUser, onOpenAut
     }
   };
 
-  // Point 5: Sorting filter for master library with interactive direction toggle
-  const sortedPapers = [...papers].sort((a, b) => {
+  // Strict filter: only show papers that have PDFs available
+  const sortedPapers = [...papers]
+    .filter((p) => p.latest_version && p.latest_version.file_path)
+    .sort((a, b) => {
     const multiplier = librarySortDirection === 'asc' ? 1 : -1;
     if (librarySortField === 'recent') {
       const timeA = new Date(a.created_at).getTime() || a.id;

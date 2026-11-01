@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_project_permission
 from app.schemas.project import (
     ProjectCreate,
+    ProjectUpdate,
     ProjectResponse,
     ProjectPaperLink,
     CuratedPaperResponse,
@@ -91,6 +92,7 @@ def create_project(
     db.commit()
     res = dict(project_row)
     res["member_count"] = 1
+    res["current_user_role"] = "owner"
     return res
 
 
@@ -101,34 +103,23 @@ def list_projects(
 ):
     """
     Lists research projects.
-    Returns projects where the user is an owner, editor, or viewer.
-    (System administrators see all projects).
+    Returns only projects where the user is an owner, editor, or viewer.
     """
-    if current_user.get("role") == "owner":
-        # System administrator sees all projects
-        sql = text("""
-            SELECT p.id, p.name, p.description, p.research_question, p.scope,
-                   p.inclusion_criteria, p.exclusion_criteria, p.owner_id,
-                   p.created_at, p.updated_at,
-                   (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = p.id) AS member_count
-            FROM projects p
-            ORDER BY p.created_at DESC;
-        """)
-        result = db.execute(sql)
-    else:
-        # Regular user sees projects they are a member of
-        sql = text("""
-            SELECT DISTINCT p.id, p.name, p.description, p.research_question, p.scope,
-                            p.inclusion_criteria, p.exclusion_criteria, p.owner_id,
-                            p.created_at, p.updated_at,
-                            (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = p.id) AS member_count
-            FROM projects p
-            JOIN project_members pm ON p.id = pm.project_id
-            WHERE pm.user_id = :user_id OR p.owner_id = :user_id
-            ORDER BY p.created_at DESC;
-        """)
-        result = db.execute(sql, {"user_id": current_user["id"]})
-
+    sql = text("""
+        SELECT DISTINCT p.id, p.name, p.description, p.research_question, p.scope,
+                        p.inclusion_criteria, p.exclusion_criteria, p.owner_id,
+                        p.created_at, p.updated_at,
+                        (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = p.id) AS member_count,
+                        COALESCE(
+                            (SELECT pm2.role FROM project_members pm2 WHERE pm2.project_id = p.id AND pm2.user_id = :user_id LIMIT 1),
+                            CASE WHEN p.owner_id = :user_id THEN 'owner' ELSE 'viewer' END
+                        ) AS current_user_role
+        FROM projects p
+        LEFT JOIN project_members pm ON p.id = pm.project_id
+        WHERE pm.user_id = :user_id OR p.owner_id = :user_id
+        ORDER BY p.created_at DESC;
+    """)
+    result = db.execute(sql, {"user_id": current_user["id"]})
     return result.mappings().fetchall()
 
 
@@ -145,17 +136,92 @@ def get_project(
         SELECT p.id, p.name, p.description, p.research_question, p.scope,
                p.inclusion_criteria, p.exclusion_criteria, p.owner_id,
                p.created_at, p.updated_at,
-               (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = p.id) AS member_count
+               (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = p.id) AS member_count,
+               COALESCE(
+                   (SELECT pm2.role FROM project_members pm2 WHERE pm2.project_id = p.id AND pm2.user_id = :user_id LIMIT 1),
+                   CASE WHEN p.owner_id = :user_id THEN 'owner' ELSE 'viewer' END
+               ) AS current_user_role
         FROM projects p
         WHERE p.id = :project_id;
     """)
-    row = db.execute(sql, {"project_id": project_id}).mappings().fetchone()
+    row = db.execute(sql, {"project_id": project_id, "user_id": current_user["id"]}).mappings().fetchone()
     if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project #{project_id} not found."
         )
     return row
+
+
+@router.patch("/{project_id}", response_model=ProjectResponse)
+def update_project(
+    project_id: int,
+    payload: ProjectUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Updates research project details (name, scope, description, research question, inclusion/exclusion criteria).
+    Enforces editor or owner permissions. Viewers cannot edit project settings.
+    """
+    require_project_permission(project_id, "editor", current_user, db)
+
+    updates = []
+    params = {"project_id": project_id}
+
+    if payload.name is not None and payload.name.strip():
+        updates.append("name = :name")
+        params["name"] = payload.name.strip()
+    if payload.description is not None:
+        updates.append("description = :description")
+        params["description"] = payload.description.strip() or None
+    if payload.research_question is not None:
+        updates.append("research_question = :research_question")
+        params["research_question"] = payload.research_question.strip() or None
+    if payload.scope is not None:
+        updates.append("scope = :scope")
+        params["scope"] = payload.scope.strip() or None
+    if payload.inclusion_criteria is not None:
+        updates.append("inclusion_criteria = :inclusion_criteria")
+        params["inclusion_criteria"] = payload.inclusion_criteria.strip() or None
+    if payload.exclusion_criteria is not None:
+        updates.append("exclusion_criteria = :exclusion_criteria")
+        params["exclusion_criteria"] = payload.exclusion_criteria.strip() or None
+
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid fields provided to update."
+        )
+
+    updates.append("updated_at = NOW()")
+    set_clause = ", ".join(updates)
+
+    sql = text(f"""
+        UPDATE projects
+        SET {set_clause}
+        WHERE id = :project_id
+        RETURNING id;
+    """)
+    result = db.execute(sql, params).fetchone()
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    # Audit event
+    db.execute(
+        text("""
+            INSERT INTO audit_events (user_id, project_id, action, details)
+            VALUES (:user_id, :project_id, 'project_updated', :details);
+        """),
+        {
+            "user_id": current_user["id"],
+            "project_id": project_id,
+            "details": json.dumps({k: v for k, v in params.items() if k != "project_id"})
+        }
+    )
+    db.commit()
+
+    return get_project(project_id=project_id, current_user=current_user, db=db)
 
 
 # --- Project Curation (Requires Editor role) ---
@@ -201,6 +267,16 @@ def curate_paper_into_project(
         }
     )
     row = result.mappings().fetchone()
+
+    # Link curated paper to current user's personal master library
+    db.execute(
+        text("""
+            INSERT INTO user_library_papers (user_id, paper_id)
+            VALUES (:uid, :pid)
+            ON CONFLICT (user_id, paper_id) DO NOTHING;
+        """),
+        {"uid": current_user["id"], "pid": payload.paper_id}
+    )
 
     # Log audit event
     db.execute(
@@ -326,16 +402,17 @@ def add_project_member(
             detail="Role must be either 'editor' or 'viewer'."
         )
 
-    # 1. Look up user by email
+    # 1. Look up user by username or email
+    ident = payload.username.strip().lower()
     target_user = db.execute(
-        text("SELECT id, email, full_name FROM users WHERE email = :email;"),
-        {"email": payload.email.strip().lower()}
+        text("SELECT id, username, email, full_name FROM users WHERE LOWER(username) = :ident OR (email IS NOT NULL AND LOWER(email) = :ident);"),
+        {"ident": ident}
     ).mappings().fetchone()
 
     if not target_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with email '{payload.email}' not found. They must register an account first."
+            detail=f"User '{payload.username}' not found. They must register an account first."
         )
 
     # 2. Add or update membership in project_members
@@ -366,7 +443,7 @@ def add_project_member(
         {
             "user_id": current_user["id"],
             "project_id": project_id,
-            "details": f'{{"invited_email": "{target_user["email"]}", "role": "{payload.role}"}}'
+            "details": f'{{"invited_username": "{target_user["username"]}", "role": "{payload.role}"}}'
         }
     )
     db.commit()
@@ -375,6 +452,7 @@ def add_project_member(
         "membership_id": membership_row["id"],
         "project_id": project_id,
         "user_id": target_user["id"],
+        "username": target_user["username"],
         "email": target_user["email"],
         "full_name": target_user["full_name"],
         "role": payload.role,
@@ -396,6 +474,7 @@ def list_project_members(
             pm.id AS membership_id,
             pm.project_id,
             pm.user_id,
+            u.username,
             u.email,
             u.full_name,
             pm.role,
@@ -451,7 +530,7 @@ def update_project_member_role(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collaborator not found in this project.")
 
     target_user = db.execute(
-        text("SELECT email, full_name FROM users WHERE id = :user_id;"),
+        text("SELECT username, email, full_name FROM users WHERE id = :user_id;"),
         {"user_id": user_id}
     ).mappings().fetchone()
 
@@ -472,8 +551,9 @@ def update_project_member_role(
         "membership_id": row["membership_id"],
         "project_id": project_id,
         "user_id": user_id,
-        "email": target_user["email"],
-        "full_name": target_user["full_name"],
+        "username": target_user["username"] if target_user else "",
+        "email": target_user["email"] if target_user else None,
+        "full_name": target_user["full_name"] if target_user else None,
         "role": payload.role,
         "created_at": row["created_at"],
     }

@@ -12,10 +12,20 @@ class ProjectCreate(BaseModel):
     exclusion_criteria: Optional[str] = Field(None, description="Exclusion criteria for papers")
 
 
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255, description="Name of the research project")
+    description: Optional[str] = Field(None, description="Overview of the project")
+    research_question: Optional[str] = Field(None, description="Primary research question")
+    scope: Optional[str] = Field(None, description="Scope boundaries")
+    inclusion_criteria: Optional[str] = Field(None, description="Inclusion criteria for papers")
+    exclusion_criteria: Optional[str] = Field(None, description="Exclusion criteria for papers")
+
+
 class ProjectResponse(ProjectCreate):
     id: int
     owner_id: Optional[int] = None
     member_count: Optional[int] = 0
+    current_user_role: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -40,8 +50,17 @@ class CuratedPaperResponse(BaseModel):
 
 
 class ProjectMemberAdd(BaseModel):
-    email: EmailStr = Field(..., description="Email of the user to invite/add")
+    username: Optional[str] = Field(None, description="Username of the user to invite/add")
+    email: Optional[str] = Field(None, description="Email of the user to invite/add (alternative)")
     role: str = Field("viewer", description="Role to assign: editor or viewer")
+
+    @model_validator(mode="after")
+    def ensure_member_ident(self):
+        if not self.username and not self.email:
+            raise ValueError("Either username or email must be provided.")
+        if not self.username and self.email:
+            self.username = self.email
+        return self
 
 
 class ProjectMemberUpdate(BaseModel):
@@ -52,7 +71,8 @@ class ProjectMemberResponse(BaseModel):
     membership_id: int
     project_id: int
     user_id: int
-    email: str
+    username: str
+    email: Optional[str] = None
     full_name: Optional[str] = None
     role: str
     created_at: datetime

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -10,16 +11,33 @@ from app.api.matrix import router as matrix_router
 from app.api.gaps import router as gaps_router
 from app.api.reviews import router as reviews_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        from app.core.migration_runner import run_database_migrations
+        run_database_migrations()
+    except Exception:
+        pass
+    yield
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Research Paper Intelligence Platform Backend API",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
 
-# Configure CORS for local development
+# Configure CORS for local development and cloud production (Render)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+    ],
+    allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -19,13 +19,13 @@ def test_insert_user_and_project(db_session):
     """Verify that a user can create a project with research question and scope."""
     # 1. Insert user
     user_sql = text("""
-        INSERT INTO users (email, full_name, role)
-        VALUES (:email, :name, :role)
-        RETURNING id, email;
+        INSERT INTO users (username, email, full_name, role)
+        VALUES (:username, :email, :name, :role)
+        RETURNING id, username;
     """)
     user = db_session.execute(
         user_sql,
-        {"email": "researcher@example.com", "name": "Dr. Researcher", "role": "owner"}
+        {"username": "dr_researcher", "email": "researcher@example.com", "name": "Dr. Researcher", "role": "owner"}
     ).fetchone()
     assert user is not None
     user_id = user[0]

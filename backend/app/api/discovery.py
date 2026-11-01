@@ -32,7 +32,7 @@ def search_papers(
     Checks each result against the user's Master Library to show if it is already imported.
     Strictly filters for papers with available full-text PDFs by default.
     """
-    valid_provider = provider.lower() if provider.lower() in {"all", "openalex", "crossref", "scopus"} else "all"
+    valid_provider = provider.lower() if provider.lower() in {"all", "openalex", "arxiv", "crossref", "scopus"} else "all"
     results = search_scholarly_papers(
         query=q,
         provider=valid_provider,
@@ -40,7 +40,8 @@ def search_papers(
         to_year=to_year,
         limit=limit,
         pdf_only=pdf_only,
-        db=db
+        db=db,
+        user_id=current_user["id"]
     )
     return DiscoverySearchResponse(
         query=q,

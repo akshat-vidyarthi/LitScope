@@ -60,19 +60,15 @@ def _row_to_paper_response(row: dict) -> dict:
 
 
 def check_paper_access(paper_id: int, current_user: dict, db: Session) -> None:
-    """Verifies user has permission to access a paper."""
-    if current_user.get("role") == "owner":
-        return
-
-    # Collaborator check: must belong to at least one project containing this paper, or have uploaded it
+    """Verifies user has permission to access a paper (in their personal library or in a project they belong to)."""
     check = db.execute(
         text("""
             SELECT 1
             FROM papers p
+            LEFT JOIN user_library_papers ulp ON ulp.paper_id = p.id AND ulp.user_id = :user_id
             LEFT JOIN project_papers pp ON p.id = pp.paper_id
             LEFT JOIN project_members pm ON pp.project_id = pm.project_id AND pm.user_id = :user_id
-            LEFT JOIN audit_events ae ON ae.action = 'paper_uploaded' AND (ae.details->>'paper_id')::int = p.id AND ae.user_id = :user_id
-            WHERE p.id = :paper_id AND (pm.user_id IS NOT NULL OR ae.user_id IS NOT NULL);
+            WHERE p.id = :paper_id AND (ulp.user_id IS NOT NULL OR pm.user_id IS NOT NULL);
         """),
         {"paper_id": paper_id, "user_id": current_user["id"]}
     ).fetchone()
@@ -134,6 +130,15 @@ def add_paper_to_library(
         }
     )
     row = result.mappings().fetchone()
+    # Link to user's personal master library
+    db.execute(
+        text("""
+            INSERT INTO user_library_papers (user_id, paper_id)
+            VALUES (:user_id, :paper_id)
+            ON CONFLICT (user_id, paper_id) DO NOTHING;
+        """),
+        {"user_id": current_user["id"], "paper_id": row["id"]}
+    )
     db.commit()
     return _row_to_paper_response(dict(row))
 
@@ -232,6 +237,16 @@ async def upload_paper_pdf(
                 text("SELECT * FROM papers WHERE id = :id;"),
                 {"id": paper_id}
             ).mappings().fetchone()
+
+        # Always link paper to current user's personal master library
+        db.execute(
+            text("""
+                INSERT INTO user_library_papers (user_id, paper_id)
+                VALUES (:user_id, :paper_id)
+                ON CONFLICT (user_id, paper_id) DO NOTHING;
+            """),
+            {"user_id": current_user["id"], "paper_id": paper_id}
+        )
 
         if project_id is not None:
             db.execute(
@@ -421,6 +436,16 @@ async def upload_paper_pdf(
             {"pid": project_id, "paper_id": paper_id}
         )
 
+    # 10. Link paper to user's personal master library
+    db.execute(
+        text("""
+            INSERT INTO user_library_papers (user_id, paper_id)
+            VALUES (:uid, :paper_id)
+            ON CONFLICT (user_id, paper_id) DO NOTHING;
+        """),
+        {"uid": current_user["id"], "paper_id": paper_id}
+    )
+
     # 11. Audit event
     db.execute(
         text("""
@@ -464,55 +489,42 @@ async def upload_paper_pdf(
 def list_library_papers(
     search: Optional[str] = Query(None, description="Keyword search in title or abstract"),
     year: Optional[int] = Query(None, description="Filter by publication year"),
+    pdf_only: bool = Query(False, description="Filter to only include papers with full-text PDFs"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Lists papers in the canonical master library with their latest version.
-    Enforces access boundaries.
+    Lists papers in the authenticated user's master library.
+    Ensures strict per-user library separability.
+    Optionally filters strictly for papers with available full-text PDFs.
     """
-    params: dict = {}
+    params: dict = {"user_id": current_user["id"]}
 
-    if current_user.get("role") == "owner":
-        query_str = """
-            SELECT p.id, p.title, p.normalized_title, p.doi, p.authors, p.year,
-                   p.venue, p.abstract, p.source_url, p.access_status,
-                   p.created_at, p.updated_at,
-                   v.id AS version_id, v.file_path, v.file_checksum, v.file_size_bytes,
-                   v.page_count, v.extraction_status, v.error_message, v.created_at AS version_created_at
-            FROM papers p
-            LEFT JOIN LATERAL (
-                SELECT id, file_path, file_checksum, file_size_bytes, page_count,
-                       extraction_status, error_message, created_at
-                FROM paper_versions
-                WHERE paper_id = p.id
-                ORDER BY created_at DESC
-                LIMIT 1
-            ) v ON true
-            WHERE 1=1
-        """
-    else:
-        query_str = """
-            SELECT DISTINCT p.id, p.title, p.normalized_title, p.doi, p.authors, p.year,
-                            p.venue, p.abstract, p.source_url, p.access_status,
-                            p.created_at, p.updated_at,
-                            v.id AS version_id, v.file_path, v.file_checksum, v.file_size_bytes,
-                            v.page_count, v.extraction_status, v.error_message, v.created_at AS version_created_at
-            FROM papers p
-            LEFT JOIN project_papers pp ON p.id = pp.paper_id
-            LEFT JOIN project_members pm ON pp.project_id = pm.project_id AND pm.user_id = :user_id
-            LEFT JOIN audit_events ae ON ae.action = 'paper_uploaded' AND (ae.details->>'paper_id')::int = p.id AND ae.user_id = :user_id
-            LEFT JOIN LATERAL (
-                SELECT id, file_path, file_checksum, file_size_bytes, page_count,
-                       extraction_status, error_message, created_at
-                FROM paper_versions
-                WHERE paper_id = p.id
-                ORDER BY created_at DESC
-                LIMIT 1
-            ) v ON true
-            WHERE pm.user_id = :user_id OR ae.user_id = :user_id
-        """
-        params["user_id"] = current_user["id"]
+    lateral_join = "JOIN LATERAL" if pdf_only else "LEFT JOIN LATERAL"
+    pdf_filter = "AND v.file_path IS NOT NULL" if pdf_only else ""
+
+    query_str = f"""
+        SELECT DISTINCT p.id, p.title, p.normalized_title, p.doi, p.authors, p.year,
+                        p.venue, p.abstract, p.source_url, p.access_status,
+                        p.created_at, p.updated_at,
+                        v.id AS version_id, v.file_path, v.file_checksum, v.file_size_bytes,
+                        v.page_count, v.extraction_status, v.error_message, v.created_at AS version_created_at
+        FROM papers p
+        LEFT JOIN user_library_papers ulp ON ulp.paper_id = p.id AND ulp.user_id = :user_id
+        LEFT JOIN project_papers pp ON pp.paper_id = p.id
+        LEFT JOIN project_members pm ON pm.project_id = pp.project_id AND pm.user_id = :user_id
+        LEFT JOIN projects proj ON proj.id = pp.project_id AND proj.owner_id = :user_id
+        {lateral_join} (
+            SELECT id, file_path, file_checksum, file_size_bytes, page_count,
+                   extraction_status, error_message, created_at
+            FROM paper_versions
+            WHERE paper_id = p.id
+            ORDER BY created_at DESC
+            LIMIT 1
+        ) v ON true
+        WHERE (ulp.user_id IS NOT NULL OR pm.user_id IS NOT NULL OR proj.owner_id IS NOT NULL)
+          {pdf_filter}
+    """
 
     if search:
         query_str += " AND (p.title ILIKE :search OR p.abstract ILIKE :search)"

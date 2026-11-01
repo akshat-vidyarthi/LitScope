@@ -65,8 +65,8 @@ def _parse_crossref_item(item: Dict[str, Any], pdf_only: bool = True) -> Optiona
             pdf_url = link.get("URL")
             break
 
-    # Strict requirement: Only return papers where PDF is actually available
-    if pdf_only and not pdf_url:
+    # Strict requirement: Only return papers where PDF is actually available (no metadata-only records)
+    if not pdf_url or not pdf_url.strip().startswith("http"):
         return None
 
     landing_page = item.get("URL") or (f"https://doi.org/{doi}" if doi else None)

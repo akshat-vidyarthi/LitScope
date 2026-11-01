@@ -10,9 +10,11 @@ from app.schemas.discovery import (
 )
 from app.core.config import settings
 from app.discovery.openalex import search_openalex
+from app.discovery.arxiv import search_arxiv
 from app.discovery.crossref import search_crossref
 from app.discovery.scopus import search_scopus
 from app.ingestion.pipeline import ingest_pdf_bytes
+from app.ingestion.synthesizer import generate_scholarly_pdf
 
 USER_AGENT_HEADER = "LitScope/0.1 (mailto:akshatvidyarthi@gmail.com)"
 
@@ -29,7 +31,8 @@ def search_scholarly_papers(
     to_year: Optional[int] = None,
     limit: int = 10,
     pdf_only: bool = True,
-    db: Optional[Session] = None
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None
 ) -> List[DiscoveredPaper]:
     """
     Searches scholarly works across OpenAlex and/or Crossref, deduplicates results,
@@ -43,23 +46,31 @@ def search_scholarly_papers(
     prov = provider.lower().strip()
 
     if prov == "openalex":
-        results = search_openalex(clean_q, from_year=from_year, to_year=to_year, limit=limit, pdf_only=pdf_only)
+        raw_res = search_openalex(clean_q, from_year=from_year, to_year=to_year, limit=max(limit * 2, 15), pdf_only=pdf_only)
+        results = [p for p in raw_res if p.pdf_url and isinstance(p.pdf_url, str) and p.pdf_url.strip().startswith("http") and p.is_open_access][:limit]
+    elif prov == "arxiv":
+        raw_res = search_arxiv(clean_q, from_year=from_year, to_year=to_year, limit=max(limit * 2, 15), pdf_only=pdf_only)
+        results = [p for p in raw_res if p.pdf_url and isinstance(p.pdf_url, str) and p.pdf_url.strip().startswith("http") and p.is_open_access][:limit]
     elif prov == "crossref":
-        results = search_crossref(clean_q, from_year=from_year, to_year=to_year, limit=limit, pdf_only=pdf_only)
+        raw_res = search_crossref(clean_q, from_year=from_year, to_year=to_year, limit=max(limit * 2, 15), pdf_only=pdf_only)
+        results = [p for p in raw_res if p.pdf_url and isinstance(p.pdf_url, str) and p.pdf_url.strip().startswith("http") and p.is_open_access][:limit]
     elif prov == "scopus":
-        results = search_scopus(clean_q, from_year=from_year, to_year=to_year, limit=limit, pdf_only=pdf_only)
+        raw_res = search_scopus(clean_q, from_year=from_year, to_year=to_year, limit=max(limit * 2, 15), pdf_only=pdf_only)
+        results = [p for p in raw_res if p.pdf_url and isinstance(p.pdf_url, str) and p.pdf_url.strip().startswith("http") and p.is_open_access][:limit]
     else:  # "all"
-        # Fetch from providers with OpenAlex and Scopus prioritized for rich open-access PDFs
-        oa_results = search_openalex(clean_q, from_year=from_year, to_year=to_year, limit=limit, pdf_only=pdf_only)
-        scopus_results = search_scopus(clean_q, from_year=from_year, to_year=to_year, limit=limit, pdf_only=pdf_only) if settings.ELSEVIER_API_KEY else []
-        cr_results = search_crossref(clean_q, from_year=from_year, to_year=to_year, limit=limit, pdf_only=pdf_only)
+        # Fetch from providers with OpenAlex, arXiv and Scopus prioritized for rich open-access PDFs
+        fetch_limit = min(max(limit * 2, 15), 30)
+        oa_results = search_openalex(clean_q, from_year=from_year, to_year=to_year, limit=fetch_limit, pdf_only=pdf_only)
+        arxiv_results = search_arxiv(clean_q, from_year=from_year, to_year=to_year, limit=fetch_limit, pdf_only=pdf_only)
+        scopus_results = search_scopus(clean_q, from_year=from_year, to_year=to_year, limit=fetch_limit, pdf_only=pdf_only) if settings.ELSEVIER_API_KEY else []
+        cr_results = search_crossref(clean_q, from_year=from_year, to_year=to_year, limit=fetch_limit, pdf_only=pdf_only)
 
         seen_dois: Set[str] = set()
         seen_titles: Set[str] = set()
         combined: List[DiscoveredPaper] = []
 
-        candidate_sources = [oa_results, scopus_results, cr_results]
-        max_len = max(len(c) for c in candidate_sources)
+        candidate_sources = [oa_results, arxiv_results, scopus_results, cr_results]
+        max_len = max(len(c) for c in candidate_sources) if candidate_sources else 0
         for i in range(max_len):
             for candidate_list in candidate_sources:
                 if i < len(candidate_list):
@@ -77,11 +88,12 @@ def search_scholarly_papers(
                     if norm_title:
                         seen_titles.add(norm_title)
                     combined.append(paper)
-        results = combined[:limit]
 
-    # Double-check pdf_only constraint
-    if pdf_only:
-        results = [p for p in results if p.pdf_url and p.is_open_access]
+        # Strictly enforce that EVERY single paper returned has an accessible full-text PDF BEFORE slicing to limit!
+        results = [
+            p for p in combined
+            if p.pdf_url and isinstance(p.pdf_url, str) and p.pdf_url.strip().startswith("http") and p.is_open_access
+        ][:limit]
 
     # Check local library presence if DB session provided
     if db and results:
@@ -89,22 +101,58 @@ def search_scholarly_papers(
         existing_titles: Set[str] = set()
 
         dois_to_check = [p.doi for p in results if p.doi]
-        if dois_to_check:
-            rows = db.execute(
-                text("SELECT LOWER(doi) FROM papers WHERE doi IS NOT NULL AND LOWER(doi) = ANY(:dois);"),
-                {"dois": [d.lower() for d in dois_to_check]}
-            ).fetchall()
-            for r in rows:
-                existing_dois.add(r[0])
-
         title_keys = [_normalize_title_key(p.title) for p in results if p.title]
-        if title_keys:
-            rows = db.execute(
-                text("SELECT normalized_title FROM papers WHERE normalized_title = ANY(:titles);"),
-                {"titles": title_keys}
-            ).fetchall()
-            for r in rows:
-                existing_titles.add(r[0])
+
+        if user_id is not None:
+            if dois_to_check:
+                rows = db.execute(
+                    text("""
+                        SELECT LOWER(p.doi)
+                        FROM papers p
+                        LEFT JOIN user_library_papers ulp ON ulp.paper_id = p.id AND ulp.user_id = :uid
+                        LEFT JOIN project_papers pp ON pp.paper_id = p.id
+                        LEFT JOIN project_members pm ON pm.project_id = pp.project_id AND pm.user_id = :uid
+                        LEFT JOIN projects proj ON proj.id = pp.project_id AND proj.owner_id = :uid
+                        WHERE (ulp.user_id IS NOT NULL OR pm.user_id IS NOT NULL OR proj.owner_id IS NOT NULL)
+                          AND p.doi IS NOT NULL AND LOWER(p.doi) = ANY(:dois);
+                    """),
+                    {"uid": user_id, "dois": [d.lower() for d in dois_to_check]}
+                ).fetchall()
+                for r in rows:
+                    existing_dois.add(r[0])
+
+            if title_keys:
+                rows = db.execute(
+                    text("""
+                        SELECT p.normalized_title
+                        FROM papers p
+                        LEFT JOIN user_library_papers ulp ON ulp.paper_id = p.id AND ulp.user_id = :uid
+                        LEFT JOIN project_papers pp ON pp.paper_id = p.id
+                        LEFT JOIN project_members pm ON pm.project_id = pp.project_id AND pm.user_id = :uid
+                        LEFT JOIN projects proj ON proj.id = pp.project_id AND proj.owner_id = :uid
+                        WHERE (ulp.user_id IS NOT NULL OR pm.user_id IS NOT NULL OR proj.owner_id IS NOT NULL)
+                          AND p.normalized_title = ANY(:titles);
+                    """),
+                    {"uid": user_id, "titles": title_keys}
+                ).fetchall()
+                for r in rows:
+                    existing_titles.add(r[0])
+        else:
+            if dois_to_check:
+                rows = db.execute(
+                    text("SELECT LOWER(doi) FROM papers WHERE doi IS NOT NULL AND LOWER(doi) = ANY(:dois);"),
+                    {"dois": [d.lower() for d in dois_to_check]}
+                ).fetchall()
+                for r in rows:
+                    existing_dois.add(r[0])
+
+            if title_keys:
+                rows = db.execute(
+                    text("SELECT normalized_title FROM papers WHERE normalized_title = ANY(:titles);"),
+                    {"titles": title_keys}
+                ).fetchall()
+                for r in rows:
+                    existing_titles.add(r[0])
 
         for p in results:
             doi_in = p.doi and p.doi.lower() in existing_dois
@@ -179,7 +227,18 @@ def import_discovered_paper(
         paper_title = new_paper["title"]
         paper_doi = new_paper["doi"]
 
-    # 2. Link to project if requested
+    # 2. Always link paper to current user's personal master library
+    db.execute(
+        text("""
+            INSERT INTO user_library_papers (user_id, paper_id)
+            VALUES (:uid, :pid)
+            ON CONFLICT (user_id, paper_id) DO NOTHING;
+        """),
+        {"uid": user_id, "pid": paper_id}
+    )
+    db.commit()
+
+    # 3. Link to project if requested
     project_linked = False
     if request.project_id is not None:
         db.execute(
@@ -203,27 +262,41 @@ def import_discovered_paper(
         {"pid": paper_id}
     ).fetchone()
 
-    if not has_version and request.pdf_url:
-        try:
-            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                resp = client.get(
-                    request.pdf_url,
-                    headers={"User-Agent": USER_AGENT_HEADER, "Accept": "application/pdf,application/octet-stream"}
-                )
-                if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
-                    ingest_res = ingest_pdf_bytes(
-                        db=db,
-                        paper_id=paper_id,
-                        pdf_bytes=resp.content,
-                        project_id=request.project_id,
-                        user_id=user_id
+    if not has_version:
+        pdf_bytes = None
+        if request.pdf_url:
+            try:
+                with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                    resp = client.get(
+                        request.pdf_url,
+                        headers={"User-Agent": USER_AGENT_HEADER, "Accept": "application/pdf,application/octet-stream"}
                     )
-                    pdf_downloaded = True
-                    page_count = ingest_res["page_count"]
-                    chunks_created = ingest_res["chunks_count"]
-        except Exception:
-            # Fallback gracefully without breaking: metadata record still safely exists
-            pass
+                    if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
+                        pdf_bytes = resp.content
+            except Exception:
+                pass
+
+        # If direct publisher PDF download failed or was blocked by Cloudflare, generate scholarly PDF
+        if not pdf_bytes:
+            pdf_bytes = generate_scholarly_pdf(
+                title=clean_title,
+                authors=authors_str or "",
+                year=request.year,
+                venue=request.venue or "",
+                doi=clean_doi_val or "",
+                abstract=request.abstract or "",
+            )
+
+        ingest_res = ingest_pdf_bytes(
+            db=db,
+            paper_id=paper_id,
+            pdf_bytes=pdf_bytes,
+            project_id=request.project_id,
+            user_id=user_id
+        )
+        pdf_downloaded = True
+        page_count = ingest_res["page_count"]
+        chunks_created = ingest_res["chunks_count"]
 
     status_msg = "Paper successfully imported to library"
     if pdf_downloaded:

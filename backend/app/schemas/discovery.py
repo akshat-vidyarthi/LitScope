@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 class DiscoveredPaper(BaseModel):
     id: str
-    source: Literal["openalex", "crossref", "scopus"]
+    source: Literal["openalex", "arxiv", "crossref", "scopus"] = "openalex"
     title: str
     authors: List[str] = Field(default_factory=list)
     year: Optional[int] = None
