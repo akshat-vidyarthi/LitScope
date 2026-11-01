@@ -23,6 +23,7 @@ import {
   AlertCircle,
   Table,
   Compass,
+  FileText,
 } from 'lucide-react';
 import { api, Project, CuratedPaper, ProjectMember, User, Paper } from '../api/client';
 import { UploadPdfModal } from './UploadPdfModal';
@@ -31,6 +32,7 @@ import { SearchLibraryModal } from './SearchLibraryModal';
 import { ProjectQAWorkspace } from './ProjectQAWorkspace';
 import { ComparisonMatrixView } from './ComparisonMatrixView';
 import { ResearchGapsView } from './ResearchGapsView';
+import { LiteratureReviewView } from './LiteratureReviewView';
 import { toast } from './Toast';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -53,15 +55,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
   const [memberToRemove, setMemberToRemove] = useState<{ userId: number; email: string } | null>(null);
   const [readingPaper, setReadingPaper] = useState<Paper | null>(null);
   const [readingPage, setReadingPage] = useState<number | undefined>(undefined);
-  const [activeTab, setActiveTab] = useState<'papers' | 'qa' | 'matrix' | 'gaps'>(() => {
+  const [activeTab, setActiveTab] = useState<'papers' | 'qa' | 'matrix' | 'gaps' | 'review'>(() => {
     const saved = localStorage.getItem('litscope_active_project_tab');
-    if (saved === 'papers' || saved === 'qa' || saved === 'matrix' || saved === 'gaps') {
+    if (saved === 'papers' || saved === 'qa' || saved === 'matrix' || saved === 'gaps' || saved === 'review') {
       return saved;
     }
     return 'papers';
   });
 
-  const handleTabChange = (tab: 'papers' | 'qa' | 'matrix' | 'gaps') => {
+  const handleTabChange = (tab: 'papers' | 'qa' | 'matrix' | 'gaps' | 'review') => {
     setActiveTab(tab);
     localStorage.setItem('litscope_active_project_tab', tab);
   };
@@ -670,6 +672,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                     <Compass className="w-4 h-4 mr-2" />
                     Research Gaps
                   </button>
+                  <button
+                    onClick={() => handleTabChange('review')}
+                    className={`pb-2.5 text-xs sm:text-sm font-semibold border-b-2 flex items-center transition ${
+                      activeTab === 'review'
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Literature Review
+                  </button>
                 </div>
 
                 {/* Tab Content */}
@@ -828,6 +841,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ currentUser, onOpenA
                   />
                 ) : activeTab === 'gaps' ? (
                   <ResearchGapsView
+                    project={selectedProject}
+                    canEdit={canEdit}
+                    onOpenPaperReader={handleOpenPaperReader}
+                  />
+                ) : activeTab === 'review' ? (
+                  <LiteratureReviewView
                     project={selectedProject}
                     canEdit={canEdit}
                     onOpenPaperReader={handleOpenPaperReader}

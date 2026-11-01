@@ -240,6 +240,33 @@ export interface ProjectQuery {
   created_at: string;
 }
 
+
+export interface ReviewReference {
+  ref_index: number;
+  paper_id: number;
+  title: string;
+  authors?: string;
+  year?: number;
+  citation_label: string;
+  doi?: string;
+}
+
+export interface LiteratureReview {
+  id: number;
+  project_id: number;
+  target_word_count: number;
+  actual_word_count: number;
+  review_text: string;
+  paper_references: ReviewReference[];
+  created_at: string;
+}
+
+export interface LiteratureReviewListResponse {
+  current_review: LiteratureReview | null;
+  history: LiteratureReview[];
+  papers_count: number;
+}
+
 const API_BASE = '/api/v1';
 
 const getAuthHeaders = (): HeadersInit => {
@@ -765,6 +792,54 @@ export const api = {
     const a = document.createElement('a');
     a.href = url;
     a.download = `project_${projectId}_research_gaps.${format === 'csv' ? 'csv' : 'md'}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  },
+
+  // Literature Reviews (Phase 8)
+  getProjectReviews: async (projectId: number): Promise<LiteratureReviewListResponse> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/reviews`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to fetch literature reviews');
+    }
+    return res.json();
+  },
+
+  generateProjectReview: async (
+    projectId: number,
+    targetWordCount: number = 350
+  ): Promise<LiteratureReview> => {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/reviews/generate`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ target_word_count: targetWordCount }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to generate continuous literature review');
+    }
+    return res.json();
+  },
+
+  exportProjectReview: async (
+    projectId: number,
+    format: 'markdown' | 'bibtex' = 'markdown',
+    reviewId?: number
+  ): Promise<void> => {
+    const reviewParam = reviewId ? `&review_id=${reviewId}` : '';
+    const res = await fetch(`${API_BASE}/projects/${projectId}/reviews/export?format=${format}${reviewParam}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to export literature review as ${format}`);
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project_${projectId}_literature_review.${format === 'bibtex' ? 'bib' : 'md'}`;
     document.body.appendChild(a);
     a.click();
     a.remove();

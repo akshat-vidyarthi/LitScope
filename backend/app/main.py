@@ -8,6 +8,7 @@ from app.api.papers import router as papers_router
 from app.api.discovery import router as discovery_router
 from app.api.matrix import router as matrix_router
 from app.api.gaps import router as gaps_router
+from app.api.reviews import router as reviews_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -32,6 +33,7 @@ app.include_router(papers_router, prefix=settings.API_V1_STR)
 app.include_router(discovery_router, prefix=settings.API_V1_STR)
 app.include_router(matrix_router, prefix=settings.API_V1_STR)
 app.include_router(gaps_router, prefix=settings.API_V1_STR)
+app.include_router(reviews_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")
