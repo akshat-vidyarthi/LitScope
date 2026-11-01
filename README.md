@@ -1,154 +1,140 @@
 # LitScope
 
-> **Research Paper Intelligence Platform**  
-> A persistent, local-first platform designed to discover, organize, retrieve, compare, and synthesize academic research papers across multiple research projects over time.
+> **Academic Literature Intelligence & Multi-Study Synthesis Platform**  
+> A research assistant built to organize, track, and compare 20-25 reference papers across research projects.
+
+[![Live App](https://img.shields.io/badge/Live_App-litscope.onrender.com-4F46E5?style=flat&logo=render)](https://litscope.onrender.com)
+[![API Docs](https://img.shields.io/badge/Swagger_API-Documentation-0EA5E9?style=flat&logo=fastapi)](https://litscope-api.onrender.com/docs)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2F17-4169E1?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-## 1. Overview & Core Concept
-
-LitScope transitions academic literature exploration from temporary "chat with a PDF" sessions into an auditable, long-term research tool.
-
-* **Canonical Master Library:** Papers are stored once in a persistent, deduplicated master library using DOI and normalized title matching. Upload once, curate across multiple studies without duplicating files or re-extracting text.
-* **Project Workspaces & Scoping:** Papers can be curated into separate research projects. Each project maintains its own research question, scope boundaries, inclusion/exclusion criteria, collaborator permissions, and analysis history.
-* **Granular Role-Based Access:** Projects support collaborative workflows with `OWNER`, `EDITOR`, and `VIEWER` roles, complete with member invitation management and dynamic role switching.
-* **In-App PDF Reader:** High-fidelity document reader with page navigation, zoom controls, and thumbnail/text inspection.
-* **Deterministic RAG & Evidence Grounding:** Hybrid retrieval (dense vector similarity + PostgreSQL full-text keyword search) coupled with academic synthesis that strictly enforces page-level citations (`[Paper Title, p. X]`).
-* **Interactive Citations:** Clicking citation pills in Q&A responses navigates the reader directly to the cited page.
-* **Cross-Paper Comparison Matrix:** Structured extraction of research objectives, methodologies, datasets, findings, and limitations across all included papers.
-* **Evidence-Based Gap Analysis:** Systematic identification of candidate research gaps across empirical paradigms, methodological limitations, and understudied datasets.
-* **Continuous Literature Review & Export:** Single continuous academic literature review connecting all included studies with target word count presets (200w, 350w, 500w, Custom), standardized author citations, interactive reader badges, and single-click Markdown / BibTeX export.
+## 🌐 Live Website
+* **Web App:** [https://litscope.onrender.com](https://litscope.onrender.com)
+* **Backend API Docs:** [https://litscope-api.onrender.com/docs](https://litscope-api.onrender.com/docs)
 
 ---
 
-## 2. System Architecture
+## 1. Why I Built LitScope
+
+As an **MBA Tech student**, I frequently write research and review papers across various subjects.
+
+Going through a bunch of reference papers (typically 20-25 papers per project) quickly becomes tedious:
+* Manually reading through dozens of papers and trying to keep track of each paper's problem statement, methodology, and results in scattered notes.
+* While giants like **NotebookLM** can handle document Q&A with the right prompts, they are general-purpose tools rather than specialized software for systematic multi-paper reviews.
+* LitScope is purpose-built purely for this goal: it automatically extracts 5-dimensional comparison tables, discovers papers directly from arXiv/Scopus, and finds research gaps without prompt engineering.
+
+I wanted to build a tool that would **speed up, keep track of, and simplify** the process of managing information across multiple papers. 
+
+Most importantly, **I wanted a tool that would aid me, not do my work for me**, so that I can do the important thinking and analysis on my own and actually learn, instead of having everything end up in a mess.
+
+---
+
+## 2. What LitScope Does
+
+* **Central Library:** Upload a reference paper once, and use it across any project without duplicate files.
+* **Comparison Matrix:** Automatically tracks each paper's objective, methodology, dataset, findings, and limitations in a clean comparative table (exportable to CSV).
+* **Clickable Page Citations:** Every answer references the exact paper and page (`[Paper Title, p. X]`). Clicking the citation opens the built-in PDF viewer right to that page.
+* **Research Gap Finder:** Scans your curated papers to highlight limitations, unstudied datasets, and conflicting results.
+* **Literature Review Drafts:** Generates structured reviews with word-count presets (`200w`, `350w`, `500w`) and exports to Markdown and BibTeX.
+* **Paper Discovery:** Search and import papers with verified full-text PDFs directly from **arXiv**, **OpenAlex**, **Crossref**, and **Elsevier Scopus**.
+
+---
+
+## 3. System Architecture
 
 ```text
-[Academic PDFs] ───────► [Master Library (Canonical Deduplication)]
-                                   │
-                                   ▼
-                        [Project Curated Studies]
-                      (OWNER / EDITOR / VIEWER Roles)
-                                   │
-            ┌──────────────────────┴──────────────────────┐
-            ▼                                             ▼
-   [PyMuPDF Text Engine]                        [Interactive In-App Reader]
-            │                                             ▲
-            ▼                                             │ (Click Citation Pill)
-[Sentence-Aware Chunker]                                  │
- (Page-Tracked Boundaries)                                │
-            │                                             │
-            ▼                                             │
- [FastEmbed Vector Model]                                 │
-  (BAAI/bge-small-en-v1.5)                                │
-            │                                             │
-            ▼                                             │
-[PostgreSQL Hybrid Index]                                 │
-(Vector Cosine + tsvector Full-Text)                      │
-            │                                             │
-            ▼                                             │
- [Evidence Retrieval Engine]                              │
-            │                                             │
-            ▼                                             │
-[Grounded Academic Synthesis] ────────────────────────────┘
-  (Strict [Title, p. X] Citations)
+               ┌────────────────────────────────────────────────────────┐
+               │              React 18 + TypeScript Client              │
+               │  (Workspace, PDF Reader, Matrix, Discovery, Synthesis) │
+               └───────────────────────────┬────────────────────────────┘
+                                           │  REST API (JWT Auth)
+                                           ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 FastAPI Backend Core                                   │
+│  ┌───────────────────────┐  ┌───────────────────────────┐  ┌────────────────────────┐  │
+│  │ Tiered Rate Limiter   │  │   PyMuPDF Document Parser │  │  FastEmbed Embedder    │  │
+│  │ (Protects API Quotas) │  │   (Sentence Chunking)     │  │  (bge-small-en-v1.5)   │  │
+│  └───────────────────────┘  └───────────────────────────┘  └────────────────────────┘  │
+└──────────────────────────┬───────────────────────────────────────────┬─────────────────┘
+                           │                                           │
+                           ▼                                           ▼
+       ┌───────────────────────────────────────┐           ┌─────────────────────────────┐
+       │         PostgreSQL Database           │           │     LLM Reasoning Engine    │
+       │  • Vector Index (Cosine Distance)     │           │  • Google Gemini API        │
+       │  • Full-Text Search (tsvector)        │           │  • Extractive Synthesizer   │
+       │  • Relational Workspaces & Auth       │           │  • Discovery Connectors     │
+       └───────────────────────────────────────┘           │    (arXiv, OpenAlex, Scopus)│
+                                                           └─────────────────────────────┘
 ```
 
 ---
 
-## 3. Technical Stack
+## 4. Reliability & Safeguards
 
-* **Backend:** Python 3.12+, FastAPI (Asynchronous REST API)
-* **Database & Search:** PostgreSQL 16/17 with SQL-first migrations, `vector` (cosine distance), and `tsvector` (full-text search)
-* **Embeddings & Extraction:** FastEmbed (`BAAI/bge-small-en-v1.5`), PyMuPDF (`fitz`), NumPy
-* **Data Access & Security:** SQLAlchemy Core, PyJWT, Bcrypt password hashing
-* **Synthesis & LLM Connectors:** Ollama (local inference), with fallback connectors for Gemini, Groq, or OpenAI
-* **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons
+* **API Rate Limiting:** Prevents server abuse and protects Gemini API key quotas by limiting login attempts (10/min) and AI requests (15/min).
+* **Automatic Cloud Database Setup:** Runs database migrations automatically on server boot.
+* **Automated Evaluation (`evaluate.py`):** Test scripts verify that citations match real pages and measure search speed.
+* **Error Recovery:** Frontend error boundary catches unexpected display issues with a clean reload button.
 
 ---
 
-## 4. Local Setup & Running
+## 5. Tech Stack
+
+| Component | Technologies Used |
+| :--- | :--- |
+| **Backend** | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, SQLAlchemy |
+| **Database** | PostgreSQL 16/17, `vector` (similarity search), `tsvector` (full-text search) |
+| **PDF Processing** | PyMuPDF (`fitz`), NumPy, FastEmbed (`BAAI/bge-small-en-v1.5`) |
+| **AI Models** | Google Gemini API (`gemini-3.5-flash-lite`), Rule-based fallbacks |
+| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons |
+| **Cloud Hosting** | Render (Web Service + Managed PostgreSQL + Static Site CDN) |
+
+---
+
+## 6. Running Locally
 
 ### Prerequisites
 * **Python 3.12+**
 * **Node.js 18+** & npm
-* **PostgreSQL 16 or 17** running locally on port `5432`
+* **PostgreSQL** running locally on port `5432`
 
----
+### 1. Database Setup
+```bash
+createdb -U postgres litscope_dev
+```
 
-### Step 1: Database Setup
-1. Create the development database in PostgreSQL:
-   ```cmd
-   createdb -U postgres litscope_dev
-   ```
-2. In `backend/`, copy `.env.example` to `.env` and set your PostgreSQL credentials:
-   ```text
-   DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/litscope_dev
-   JWT_SECRET_KEY=your-secure-random-secret-key-at-least-32-characters
-   ```
-3. Run the SQL schema migrations:
-   ```cmd
-   cd backend
-   python -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   python -m app.core.migrate
-   ```
+### 2. Backend Setup
+```bash
+cd backend
+python -m venv .venv
 
----
-
-### Step 2: Running the Backend
-From the `backend/` directory:
-```cmd
+# Windows:
 .venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
+
+pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
-* **API Root:** `http://localhost:8000/`
-* **Interactive OpenAPI Docs:** `http://localhost:8000/docs`
+* **API Root:** `http://localhost:8000`
+* **Swagger Documentation:** `http://localhost:8000/docs`
 
----
-
-### Step 3: Running the Frontend
-From the `frontend/` directory:
-```cmd
+### 3. Frontend Setup
+```bash
+cd frontend
 npm install
 npm run dev
 ```
-* **Web UI:** `http://localhost:5173/`
+* **Web UI:** `http://localhost:5173`
 
 ---
 
-### Running Automated Tests
-
-* **Backend Unit & API Tests:**
-  ```cmd
-  cd backend
-  .venv\Scripts\pytest.exe -v
-  ```
-
-* **Frontend Build Check:**
-  ```cmd
-  cd frontend
-  npm run build
-  ```
-
----
-
-## 5. Development Roadmap
-
-- [x] **Phase 1:** Project Skeleton, PostgreSQL Persistence, and REST API Baseline
-- [x] **Phase 2:** Authentication, User Roles & Project Curation Workspaces
-- [x] **Phase 3:** PDF Ingestion, Text Extraction & Master Library Reader
-- [x] **Phase 4:** Sentence-Aware Chunking, Hybrid Vector Retrieval & Grounded Q&A Synthesis
-- [x] **Phase 5:** Scholarly Discovery Connectors (OpenAlex & Crossref)
-- [x] **Phase 6:** Structured Evidence Extraction & Cross-Paper Comparison Matrix
-- [x] **Phase 7:** Evidence-Based Candidate Research-Gap Analysis
-- [x] **Phase 8:** Continuous Literature Review Generation & Report Exporting
-- [ ] **Phase 9:** Cloud Deployment & Access Management
-- [ ] **Phase 10:** Evaluation Suite & System Hardening
-
----
-
-## 6. License & Author
-* **Author:** [akshat-vidyarthi](https://github.com/akshat-vidyarthi)
-* **License:** MIT
+## 7. Author & License
+* **Author:** [Akshat Vidyarthi](https://github.com/akshat-vidyarthi) | [akshatvidyarthi@gmail.com](mailto:akshatvidyarthi@gmail.com)
+* **License:** [MIT License](LICENSE)
