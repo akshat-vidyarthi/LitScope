@@ -1,7 +1,10 @@
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.core.rate_limiter import RateLimitMiddleware
 from app.api.health import router as health_router
 from app.api.auth import router as auth_router
 from app.api.projects import router as projects_router
@@ -10,6 +13,8 @@ from app.api.discovery import router as discovery_router
 from app.api.matrix import router as matrix_router
 from app.api.gaps import router as gaps_router
 from app.api.reviews import router as reviews_router
+
+logger = logging.getLogger("litscope")
 
 
 @asynccontextmanager
@@ -29,6 +34,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Enforce rate limiting before expensive endpoints
+app.add_middleware(RateLimitMiddleware)
+
 # Configure CORS for local development and cloud production (Render)
 app.add_middleware(
     CORSMiddleware,
@@ -42,6 +50,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global unhandled exception handler to sanitize 500 errors and protect internal details
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred. Please try again later."}
+    )
 
 # Register routes under /api/v1
 app.include_router(health_router, prefix=settings.API_V1_STR)

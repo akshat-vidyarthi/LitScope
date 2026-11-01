@@ -292,6 +292,26 @@ const getAuthHeadersNoContentType = (): HeadersInit => {
   return headers;
 };
 
+const handleApiError = async (res: Response, fallbackMessage: string): Promise<never> => {
+  if (res.status === 429) {
+    try {
+      const err = await res.json();
+      throw new Error(err.detail || 'Rate limit reached. Please wait a moment before trying again.');
+    } catch (e: any) {
+      throw new Error(e.message || 'Rate limit reached. Please wait a moment before trying again.');
+    }
+  }
+  if (res.status === 503 || res.status === 504) {
+    throw new Error('Cloud server is waking up. Please wait 15-30 seconds and retry.');
+  }
+  try {
+    const err = await res.json();
+    throw new Error(err.detail || fallbackMessage);
+  } catch (e: any) {
+    throw new Error(e.message || fallbackMessage);
+  }
+};
+
 export const api = {
   // Auth
   register: async (username: string, password: string, fullName?: string): Promise<User> => {
@@ -301,8 +321,7 @@ export const api = {
       body: JSON.stringify({ username, password, full_name: fullName }),
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Registration failed');
+      return await handleApiError(res, 'Registration failed');
     }
     return res.json();
   },
@@ -314,8 +333,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Invalid email or password');
+      return await handleApiError(res, 'Invalid username or password');
     }
     const data = await res.json();
     localStorage.setItem('litscope_token', data.access_token);

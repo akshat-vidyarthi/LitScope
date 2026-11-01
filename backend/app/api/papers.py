@@ -171,6 +171,13 @@ async def upload_paper_pdf(
                 detail="You do not have permission to add papers to this project."
             )
 
+    # 1b. Validate filename extension
+    if file.filename and not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF documents (.pdf) are supported."
+        )
+
     # 2. Read raw file bytes and validate
     content = await file.read()
     try:
